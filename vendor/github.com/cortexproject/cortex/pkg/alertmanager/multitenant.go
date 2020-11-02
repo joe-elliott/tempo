@@ -126,16 +126,23 @@ func (cfg *MultitenantAlertmanagerConfig) RegisterFlags(f *flag.FlagSet) {
 }
 
 type multitenantAlertmanagerMetrics struct {
-	invalidConfig *prometheus.GaugeVec
+	lastReloadSuccessful          *prometheus.GaugeVec
+	lastReloadSuccessfulTimestamp *prometheus.GaugeVec
 }
 
 func newMultitenantAlertmanagerMetrics(reg prometheus.Registerer) *multitenantAlertmanagerMetrics {
 	m := &multitenantAlertmanagerMetrics{}
 
-	m.invalidConfig = promauto.With(reg).NewGaugeVec(prometheus.GaugeOpts{
+	m.lastReloadSuccessful = promauto.With(reg).NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "cortex",
-		Name:      "alertmanager_config_invalid",
-		Help:      "Whenever the Alertmanager config is invalid for a user.",
+		Name:      "alertmanager_config_last_reload_successful",
+		Help:      "Boolean set to 1 whenever the last configuration reload attempt was successful.",
+	}, []string{"user"})
+
+	m.lastReloadSuccessfulTimestamp = promauto.With(reg).NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "cortex",
+		Name:      "alertmanager_config_last_reload_successful_seconds",
+		Help:      "Timestamp of the last successful configuration reload.",
 	}, []string{"user"})
 
 	return m
@@ -173,6 +180,10 @@ func NewMultitenantAlertmanager(cfg *MultitenantAlertmanagerConfig, logger log.L
 	err := os.MkdirAll(cfg.DataDir, 0777)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create Alertmanager data directory %q: %s", cfg.DataDir, err)
+	}
+
+	if cfg.ExternalURL.URL == nil {
+		return nil, fmt.Errorf("unable to create Alertmanager because the external URL has not been configured")
 	}
 
 	var fallbackConfig []byte
@@ -310,12 +321,13 @@ func (am *MultitenantAlertmanager) syncConfigs(cfgs map[string]alerts.AlertConfi
 	for user, cfg := range cfgs {
 		err := am.setConfig(cfg)
 		if err != nil {
-			am.multitenantMetrics.invalidConfig.WithLabelValues(user).Set(float64(1))
+			am.multitenantMetrics.lastReloadSuccessful.WithLabelValues(user).Set(float64(0))
 			level.Warn(am.logger).Log("msg", "error applying config", "err", err)
 			continue
 		}
 
-		am.multitenantMetrics.invalidConfig.WithLabelValues(user).Set(float64(0))
+		am.multitenantMetrics.lastReloadSuccessful.WithLabelValues(user).Set(float64(1))
+		am.multitenantMetrics.lastReloadSuccessfulTimestamp.WithLabelValues(user).SetToCurrentTime()
 	}
 
 	am.alertmanagersMtx.Lock()
@@ -328,7 +340,8 @@ func (am *MultitenantAlertmanager) syncConfigs(cfgs map[string]alerts.AlertConfi
 			level.Info(am.logger).Log("msg", "deactivating per-tenant alertmanager", "user", user)
 			userAM.Pause()
 			delete(am.cfgs, user)
-			am.multitenantMetrics.invalidConfig.DeleteLabelValues(user)
+			am.multitenantMetrics.lastReloadSuccessful.DeleteLabelValues(user)
+			am.multitenantMetrics.lastReloadSuccessfulTimestamp.DeleteLabelValues(user)
 			level.Info(am.logger).Log("msg", "deactivated per-tenant alertmanager", "user", user)
 		}
 	}
@@ -355,26 +368,6 @@ func (am *MultitenantAlertmanager) transformConfig(userID string, amConfig *amco
 	return amConfig, nil
 }
 
-func (am *MultitenantAlertmanager) createTemplatesFile(userID, fn, content string) (bool, error) {
-	dir := filepath.Join(am.cfg.DataDir, "templates", userID, filepath.Dir(fn))
-	err := os.MkdirAll(dir, 0755)
-	if err != nil {
-		return false, fmt.Errorf("unable to create Alertmanager templates directory %q: %s", dir, err)
-	}
-
-	file := filepath.Join(dir, fn)
-	// Check if the template file already exists and if it has changed
-	if tmpl, err := ioutil.ReadFile(file); err == nil && string(tmpl) == content {
-		return false, nil
-	}
-
-	if err := ioutil.WriteFile(file, []byte(content), 0644); err != nil {
-		return false, fmt.Errorf("unable to create Alertmanager template file %q: %s", file, err)
-	}
-
-	return true, nil
-}
-
 // setConfig applies the given configuration to the alertmanager for `userID`,
 // creating an alertmanager if it doesn't already exist.
 func (am *MultitenantAlertmanager) setConfig(cfg alerts.AlertConfigDesc) error {
@@ -386,7 +379,7 @@ func (am *MultitenantAlertmanager) setConfig(cfg alerts.AlertConfigDesc) error {
 	var hasTemplateChanges bool
 
 	for _, tmpl := range cfg.Templates {
-		hasChanged, err := am.createTemplatesFile(cfg.User, tmpl.Filename, tmpl.Body)
+		hasChanged, err := createTemplateFile(am.cfg.DataDir, cfg.User, tmpl.Filename, tmpl.Body)
 		if err != nil {
 			return err
 		}
@@ -402,7 +395,7 @@ func (am *MultitenantAlertmanager) setConfig(cfg alerts.AlertConfigDesc) error {
 		if am.fallbackConfig == "" {
 			return fmt.Errorf("blank Alertmanager configuration for %v", cfg.User)
 		}
-		level.Info(am.logger).Log("msg", "blank Alertmanager configuration; using fallback", "user", cfg.User)
+		level.Debug(am.logger).Log("msg", "blank Alertmanager configuration; using fallback", "user", cfg.User)
 		userAmConfig, err = amconfig.Load(am.fallbackConfig)
 		if err != nil {
 			return fmt.Errorf("unable to load fallback configuration for %v: %v", cfg.User, err)
@@ -479,11 +472,47 @@ func (am *MultitenantAlertmanager) ServeHTTP(w http.ResponseWriter, req *http.Re
 	userAM, ok := am.alertmanagers[userID]
 	am.alertmanagersMtx.Unlock()
 
-	if !ok || !userAM.IsActive() {
-		http.Error(w, "no Alertmanager for this user ID", http.StatusNotFound)
+	if ok {
+		if !userAM.IsActive() {
+			http.Error(w, "the Alertmanager is not configured", http.StatusNotFound)
+			return
+		}
+
+		userAM.mux.ServeHTTP(w, req)
 		return
 	}
-	userAM.mux.ServeHTTP(w, req)
+
+	if am.fallbackConfig != "" {
+		userAM, err = am.alertmanagerFromFallbackConfig(userID)
+		if err != nil {
+			http.Error(w, "Failed to initialize the Alertmanager", http.StatusInternalServerError)
+			return
+		}
+
+		userAM.mux.ServeHTTP(w, req)
+		return
+	}
+
+	http.Error(w, "the Alertmanager is not configured", http.StatusNotFound)
+}
+
+func (am *MultitenantAlertmanager) alertmanagerFromFallbackConfig(userID string) (*Alertmanager, error) {
+	// Upload an empty config so that the Alertmanager is no de-activated in the next poll
+	cfgDesc := alerts.ToProto("", nil, userID)
+	err := am.store.SetAlertConfig(context.Background(), cfgDesc)
+	if err != nil {
+		return nil, err
+	}
+
+	// Calling setConfig with an empty configuration will use the fallback config.
+	err = am.setConfig(cfgDesc)
+	if err != nil {
+		return nil, err
+	}
+
+	am.alertmanagersMtx.Lock()
+	defer am.alertmanagersMtx.Unlock()
+	return am.alertmanagers[userID], nil
 }
 
 // GetStatusHandler returns the status handler for this multi-tenant
@@ -505,4 +534,28 @@ func (s StatusHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+func createTemplateFile(dataDir, userID, fn, content string) (bool, error) {
+	if fn != filepath.Base(fn) {
+		return false, fmt.Errorf("template file name '%s' is not not valid", fn)
+	}
+
+	dir := filepath.Join(dataDir, "templates", userID, filepath.Dir(fn))
+	err := os.MkdirAll(dir, 0755)
+	if err != nil {
+		return false, fmt.Errorf("unable to create Alertmanager templates directory %q: %s", dir, err)
+	}
+
+	file := filepath.Join(dir, fn)
+	// Check if the template file already exists and if it has changed
+	if tmpl, err := ioutil.ReadFile(file); err == nil && string(tmpl) == content {
+		return false, nil
+	}
+
+	if err := ioutil.WriteFile(file, []byte(content), 0644); err != nil {
+		return false, fmt.Errorf("unable to create Alertmanager template file %q: %s", file, err)
+	}
+
+	return true, nil
 }

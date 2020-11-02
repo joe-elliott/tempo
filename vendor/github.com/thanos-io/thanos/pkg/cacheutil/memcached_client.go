@@ -5,6 +5,8 @@ package cacheutil
 
 import (
 	"context"
+	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -28,11 +30,18 @@ const (
 	opGetMulti            = "getmulti"
 	reasonMaxItemSize     = "max-item-size"
 	reasonAsyncBufferFull = "async-buffer-full"
+	reasonMalformedKey    = "malformed-key"
+	reasonTimeout         = "timeout"
+	reasonServerError     = "server-error"
+	reasonNetworkError    = "network-error"
+	reasonOther           = "other"
 )
 
 var (
-	errMemcachedAsyncBufferFull = errors.New("the async buffer is full")
-	errMemcachedConfigNoAddrs   = errors.New("no memcached addresses provided")
+	errMemcachedAsyncBufferFull                = errors.New("the async buffer is full")
+	errMemcachedConfigNoAddrs                  = errors.New("no memcached addresses provided")
+	errMemcachedDNSUpdateIntervalNotPositive   = errors.New("DNS provider update interval must be positive")
+	errMemcachedMaxAsyncConcurrencyNotPositive = errors.New("max async concurrency must be positive")
 
 	defaultMemcachedClientConfig = MemcachedClientConfig{
 		Timeout:                   500 * time.Millisecond,
@@ -81,27 +90,25 @@ type MemcachedClientConfig struct {
 	// set to a number higher than your peak parallel requests.
 	MaxIdleConnections int `yaml:"max_idle_connections"`
 
-	// MaxAsyncConcurrency specifies the maximum number of concurrent asynchronous
-	// operations can occur.
+	// MaxAsyncConcurrency specifies the maximum number of SetAsync goroutines.
 	MaxAsyncConcurrency int `yaml:"max_async_concurrency"`
 
-	// MaxAsyncBufferSize specifies the maximum number of enqueued asynchronous
-	// operations allowed.
+	// MaxAsyncBufferSize specifies the queue buffer size for SetAsync operations.
 	MaxAsyncBufferSize int `yaml:"max_async_buffer_size"`
 
-	// MaxGetMultiConcurrency specifies the maximum number of concurrent connections
-	// running GetMulti() operations. If set to 0, concurrency is unlimited.
+	// MaxGetMultiConcurrency specifies the maximum number of concurrent GetMulti() operations.
+	// If set to 0, concurrency is unlimited.
 	MaxGetMultiConcurrency int `yaml:"max_get_multi_concurrency"`
 
-	// MaxItemSize specifies the maximum size of an item stored in memcached. Bigger
-	// items are skipped to be stored by the client. If set to 0, no maximum size is
-	// enforced.
+	// MaxItemSize specifies the maximum size of an item stored in memcached.
+	// Items bigger than MaxItemSize are skipped.
+	// If set to 0, no maximum size is enforced.
 	MaxItemSize model.Bytes `yaml:"max_item_size"`
 
 	// MaxGetMultiBatchSize specifies the maximum number of keys a single underlying
 	// GetMulti() should run. If more keys are specified, internally keys are splitted
-	// into multiple batches and fetched concurrently, honoring MaxGetMultiConcurrency
-	// parallelism. If set to 0, the max batch size is unlimited.
+	// into multiple batches and fetched concurrently, honoring MaxGetMultiConcurrency parallelism.
+	// If set to 0, the max batch size is unlimited.
 	MaxGetMultiBatchSize int `yaml:"max_get_multi_batch_size"`
 
 	// DNSProviderUpdateInterval specifies the DNS discovery update interval.
@@ -111,6 +118,16 @@ type MemcachedClientConfig struct {
 func (c *MemcachedClientConfig) validate() error {
 	if len(c.Addresses) == 0 {
 		return errMemcachedConfigNoAddrs
+	}
+
+	// Avoid panic in time ticker.
+	if c.DNSProviderUpdateInterval <= 0 {
+		return errMemcachedDNSUpdateIntervalNotPositive
+	}
+
+	// Set async only available when MaxAsyncConcurrency > 0.
+	if c.MaxAsyncConcurrency <= 0 {
+		return errMemcachedMaxAsyncConcurrencyNotPositive
 	}
 
 	return nil
@@ -148,10 +165,12 @@ type memcachedClient struct {
 	workers sync.WaitGroup
 
 	// Tracked metrics.
+	clientInfo prometheus.GaugeFunc
 	operations *prometheus.CounterVec
 	failures   *prometheus.CounterVec
 	skipped    *prometheus.CounterVec
 	duration   *prometheus.HistogramVec
+	dataSize   *prometheus.HistogramVec
 }
 
 type memcachedGetMultiResult struct {
@@ -210,9 +229,28 @@ func newMemcachedClient(
 		dnsProvider: dnsProvider,
 		asyncQueue:  make(chan func(), config.MaxAsyncBufferSize),
 		stop:        make(chan struct{}, 1),
-		getMultiGate: gate.NewKeeper(extprom.WrapRegistererWithPrefix("thanos_memcached_getmulti_", reg)).
-			NewGate(config.MaxGetMultiConcurrency),
+		getMultiGate: gate.New(
+			extprom.WrapRegistererWithPrefix("thanos_memcached_getmulti_", reg),
+			config.MaxGetMultiConcurrency,
+		),
 	}
+
+	c.clientInfo = promauto.With(reg).NewGaugeFunc(prometheus.GaugeOpts{
+		Name: "thanos_memcached_client_info",
+		Help: "A metric with a constant '1' value labeled by configuration options from which memcached client was configured.",
+		ConstLabels: prometheus.Labels{
+			"timeout":                      config.Timeout.String(),
+			"max_idle_connections":         strconv.Itoa(config.MaxIdleConnections),
+			"max_async_concurrency":        strconv.Itoa(config.MaxAsyncConcurrency),
+			"max_async_buffer_size":        strconv.Itoa(config.MaxAsyncBufferSize),
+			"max_item_size":                strconv.FormatUint(uint64(config.MaxItemSize), 10),
+			"max_get_multi_concurrency":    strconv.Itoa(config.MaxGetMultiConcurrency),
+			"max_get_multi_batch_size":     strconv.Itoa(config.MaxGetMultiBatchSize),
+			"dns_provider_update_interval": config.DNSProviderUpdateInterval.String(),
+		},
+	},
+		func() float64 { return 1 },
+	)
 
 	c.operations = promauto.With(reg).NewCounterVec(prometheus.CounterOpts{
 		Name: "thanos_memcached_operations_total",
@@ -224,9 +262,17 @@ func newMemcachedClient(
 	c.failures = promauto.With(reg).NewCounterVec(prometheus.CounterOpts{
 		Name: "thanos_memcached_operation_failures_total",
 		Help: "Total number of operations against memcached that failed.",
-	}, []string{"operation"})
-	c.failures.WithLabelValues(opGetMulti)
-	c.failures.WithLabelValues(opSet)
+	}, []string{"operation", "reason"})
+	c.failures.WithLabelValues(opGetMulti, reasonTimeout)
+	c.failures.WithLabelValues(opGetMulti, reasonMalformedKey)
+	c.failures.WithLabelValues(opGetMulti, reasonServerError)
+	c.failures.WithLabelValues(opGetMulti, reasonNetworkError)
+	c.failures.WithLabelValues(opGetMulti, reasonOther)
+	c.failures.WithLabelValues(opSet, reasonTimeout)
+	c.failures.WithLabelValues(opSet, reasonMalformedKey)
+	c.failures.WithLabelValues(opSet, reasonServerError)
+	c.failures.WithLabelValues(opSet, reasonNetworkError)
+	c.failures.WithLabelValues(opSet, reasonOther)
 
 	c.skipped = promauto.With(reg).NewCounterVec(prometheus.CounterOpts{
 		Name: "thanos_memcached_operation_skipped_total",
@@ -243,6 +289,18 @@ func newMemcachedClient(
 	}, []string{"operation"})
 	c.duration.WithLabelValues(opGetMulti)
 	c.duration.WithLabelValues(opSet)
+
+	c.dataSize = promauto.With(reg).NewHistogramVec(prometheus.HistogramOpts{
+		Name: "thanos_memcached_operation_data_size_bytes",
+		Help: "Tracks the size of the data stored in and fetched from memcached.",
+		Buckets: []float64{
+			32, 256, 512, 1024, 32 * 1024, 256 * 1024, 512 * 1024, 1024 * 1024, 32 * 1024 * 1024, 256 * 1024 * 1024, 512 * 1024 * 1024,
+		},
+	},
+		[]string{"operation"},
+	)
+	c.dataSize.WithLabelValues(opGetMulti)
+	c.dataSize.WithLabelValues(opSet)
 
 	// As soon as the client is created it must ensure that memcached server
 	// addresses are resolved, so we're going to trigger an initial addresses
@@ -288,15 +346,21 @@ func (c *memcachedClient) SetAsync(_ context.Context, key string, value []byte, 
 			Expiration: int32(time.Now().Add(ttl).Unix()),
 		})
 		if err != nil {
-			c.failures.WithLabelValues(opSet).Inc()
-
 			// If the PickServer will fail for any reason the server address will be nil
 			// and so missing in the logs. We're OK with that (it's a best effort).
 			serverAddr, _ := c.selector.PickServer(key)
-			level.Warn(c.logger).Log("msg", "failed to store item to memcached", "key", key, "sizeBytes", len(value), "server", serverAddr, "err", err)
+			level.Debug(c.logger).Log(
+				"msg", "failed to store item to memcached",
+				"key", key,
+				"sizeBytes", len(value),
+				"server", serverAddr,
+				"err", err,
+			)
+			c.trackError(opSet, err)
 			return
 		}
 
+		c.dataSize.WithLabelValues(opSet).Observe(float64(len(value)))
 		c.duration.WithLabelValues(opSet).Observe(time.Since(start).Seconds())
 	})
 
@@ -410,12 +474,39 @@ func (c *memcachedClient) getMultiSingle(ctx context.Context, keys []string) (it
 	c.operations.WithLabelValues(opGetMulti).Inc()
 	items, err = c.client.GetMulti(keys)
 	if err != nil {
-		c.failures.WithLabelValues(opGetMulti).Inc()
+		level.Debug(c.logger).Log("msg", "failed to get multiple items from memcached", "err", err)
+		c.trackError(opGetMulti, err)
 	} else {
+		var total int
+		for _, it := range items {
+			total += len(it.Value)
+		}
+		c.dataSize.WithLabelValues(opGetMulti).Observe(float64(total))
 		c.duration.WithLabelValues(opGetMulti).Observe(time.Since(start).Seconds())
 	}
 
 	return items, err
+}
+
+func (c *memcachedClient) trackError(op string, err error) {
+	var connErr *memcache.ConnectTimeoutError
+	var netErr net.Error
+	switch {
+	case errors.As(err, &connErr):
+		c.failures.WithLabelValues(op, reasonTimeout).Inc()
+	case errors.As(err, &netErr):
+		if netErr.Timeout() {
+			c.failures.WithLabelValues(op, reasonTimeout).Inc()
+		} else {
+			c.failures.WithLabelValues(op, reasonNetworkError).Inc()
+		}
+	case errors.Is(err, memcache.ErrMalformedKey):
+		c.failures.WithLabelValues(op, reasonMalformedKey).Inc()
+	case errors.Is(err, memcache.ErrServerError):
+		c.failures.WithLabelValues(op, reasonServerError).Inc()
+	default:
+		c.failures.WithLabelValues(op, reasonOther).Inc()
+	}
 }
 
 func (c *memcachedClient) enqueueAsync(op func()) error {
@@ -466,7 +557,7 @@ func (c *memcachedClient) resolveAddrs() error {
 
 	// If some of the dns resolution fails, log the error.
 	if err := c.dnsProvider.Resolve(ctx, c.config.Addresses); err != nil {
-		level.Error(c.logger).Log("msg", "failed to resolve addresses for storeAPIs", "addresses", strings.Join(c.config.Addresses, ","), "err", err)
+		level.Error(c.logger).Log("msg", "failed to resolve addresses for memcached", "addresses", strings.Join(c.config.Addresses, ","), "err", err)
 	}
 	// Fail in case no server address is resolved.
 	servers := c.dnsProvider.Addresses()

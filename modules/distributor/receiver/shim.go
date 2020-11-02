@@ -21,7 +21,6 @@ import (
 	"go.opentelemetry.io/collector/component/componenterror"
 	"go.opentelemetry.io/collector/config"
 	"go.opentelemetry.io/collector/config/configmodels"
-	"go.opentelemetry.io/collector/consumer/converter"
 	"go.opentelemetry.io/collector/consumer/pdata"
 	"go.opentelemetry.io/collector/obsreport"
 	"go.opentelemetry.io/collector/receiver/jaegerreceiver"
@@ -74,8 +73,8 @@ func New(receiverCfg map[string]interface{}, pusher tempopb.PusherServer, authEn
 	// load config
 	receiverFactories, err := component.MakeReceiverFactoryMap(
 		jaegerreceiver.NewFactory(),
-		&zipkinreceiver.Factory{},
-		&opencensusreceiver.Factory{},
+		zipkinreceiver.NewFactory(),
+		opencensusreceiver.NewFactory(),
 		otlpreceiver.NewFactory(),
 	)
 	if err != nil {
@@ -107,13 +106,10 @@ func New(receiverCfg map[string]interface{}, pusher tempopb.PusherServer, authEn
 
 			shim.receivers = append(shim.receivers, receiver)
 			continue
+		} else {
+			return nil, fmt.Errorf("Unable to cast factoryBase %s as ReceiverFactory", factoryBase.Type())
 		}
 
-		factory := factoryBase.(component.ReceiverFactoryOld)
-		receiver, err := factory.CreateTraceReceiver(ctx, zapLogger, cfg, converter.NewOCToInternalTraceConverter(shim))
-		if err != nil {
-			return nil, err
-		}
 		shim.receivers = append(shim.receivers, receiver)
 	}
 

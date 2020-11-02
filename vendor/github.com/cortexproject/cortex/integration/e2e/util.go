@@ -1,10 +1,14 @@
 package e2e
 
 import (
+	"io/ioutil"
 	"math"
 	"math/rand"
 	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/prometheus/common/model"
@@ -66,6 +70,13 @@ func GetRequest(url string) (*http.Response, error) {
 	return client.Get(url)
 }
 
+func PostRequest(url string) (*http.Response, error) {
+	const timeout = 1 * time.Second
+
+	client := &http.Client{Timeout: timeout}
+	return client.Post(url, "", strings.NewReader(""))
+}
+
 // timeToMilliseconds returns the input time as milliseconds, using the same
 // formula used by Prometheus in order to get the same timestamp when asserting
 // on query results.
@@ -107,4 +118,35 @@ func GenerateSeries(name string, ts time.Time, additionalLabels ...prompb.Label)
 	})
 
 	return
+}
+
+// GetTempDirectory creates a temporary directory for shared integration
+// test files, either in the working directory or a directory referenced by
+// the E2E_TEMP_DIR environment variable
+func GetTempDirectory() (string, error) {
+	var (
+		dir string
+		err error
+	)
+	// If a temp dir is referenced, return that
+	if os.Getenv("E2E_TEMP_DIR") != "" {
+		dir = os.Getenv("E2E_TEMP_DIR")
+	} else {
+		dir, err = os.Getwd()
+		if err != nil {
+			return "", err
+		}
+	}
+
+	tmpDir, err := ioutil.TempDir(dir, "e2e_integration_test")
+	if err != nil {
+		return "", err
+	}
+	absDir, err := filepath.Abs(tmpDir)
+	if err != nil {
+		_ = os.RemoveAll(tmpDir)
+		return "", err
+	}
+
+	return absDir, nil
 }

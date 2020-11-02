@@ -38,13 +38,9 @@ type ingesterMetrics struct {
 	walReplayDuration       prometheus.Gauge
 	walCorruptionsTotal     prometheus.Counter
 
-	// Chunks / blocks transfer.
+	// Chunks transfer.
 	sentChunks     prometheus.Counter
 	receivedChunks prometheus.Counter
-	sentFiles      prometheus.Counter
-	receivedFiles  prometheus.Counter
-	receivedBytes  prometheus.Counter
-	sentBytes      prometheus.Counter
 
 	// Chunks flushing.
 	flushSeriesInProgress         prometheus.Gauge
@@ -57,9 +53,11 @@ type ingesterMetrics struct {
 	seriesDequeuedOutcome         *prometheus.CounterVec
 	droppedChunks                 prometheus.Counter
 	oldestUnflushedChunkTimestamp prometheus.Gauge
+
+	activeSeriesPerUser *prometheus.GaugeVec
 }
 
-func newIngesterMetrics(r prometheus.Registerer, createMetricsConflictingWithTSDB bool) *ingesterMetrics {
+func newIngesterMetrics(r prometheus.Registerer, createMetricsConflictingWithTSDB bool, activeSeriesEnabled bool) *ingesterMetrics {
 	m := &ingesterMetrics{
 		flushQueueLength: promauto.With(r).NewGauge(prometheus.GaugeOpts{
 			Name: "cortex_ingester_flush_queue_length",
@@ -145,22 +143,6 @@ func newIngesterMetrics(r prometheus.Registerer, createMetricsConflictingWithTSD
 			Name: "cortex_ingester_received_chunks",
 			Help: "The total number of chunks received by this ingester whilst joining",
 		}),
-		sentFiles: promauto.With(r).NewCounter(prometheus.CounterOpts{
-			Name: "cortex_ingester_sent_files",
-			Help: "The total number of files sent by this ingester whilst leaving.",
-		}),
-		receivedFiles: promauto.With(r).NewCounter(prometheus.CounterOpts{
-			Name: "cortex_ingester_received_files",
-			Help: "The total number of files received by this ingester whilst joining",
-		}),
-		receivedBytes: promauto.With(r).NewCounter(prometheus.CounterOpts{
-			Name: "cortex_ingester_received_bytes_total",
-			Help: "The total number of bytes received by this ingester whilst joining",
-		}),
-		sentBytes: promauto.With(r).NewCounter(prometheus.CounterOpts{
-			Name: "cortex_ingester_sent_bytes_total",
-			Help: "The total number of bytes sent by this ingester whilst leaving",
-		}),
 
 		// Chunks flushing.
 		flushSeriesInProgress: promauto.With(r).NewGauge(prometheus.GaugeOpts{
@@ -209,6 +191,16 @@ func newIngesterMetrics(r prometheus.Registerer, createMetricsConflictingWithTSD
 			Name: "cortex_oldest_unflushed_chunk_timestamp_seconds",
 			Help: "Unix timestamp of the oldest unflushed chunk in the memory",
 		}),
+
+		// Not registered automatically, but only if activeSeriesEnabled is true.
+		activeSeriesPerUser: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "cortex_ingester_active_series",
+			Help: "Number of currently active series per user.",
+		}, []string{"user"}),
+	}
+
+	if activeSeriesEnabled && r != nil {
+		r.MustRegister(m.activeSeriesPerUser)
 	}
 
 	if createMetricsConflictingWithTSDB {
