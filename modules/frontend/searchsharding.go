@@ -79,10 +79,12 @@ func (r *searchResponse) addResponse(res *tempopb.SearchResponse) {
 	}
 
 	// purposefully ignoring InspectedBlocks as that value is set by the sharder
-	r.resultsMetrics.InspectedBytes += res.Metrics.InspectedBytes
-	r.resultsMetrics.InspectedTraces += res.Metrics.InspectedTraces
-	r.resultsMetrics.SkippedBlocks += res.Metrics.SkippedBlocks
-	r.resultsMetrics.SkippedTraces += res.Metrics.SkippedTraces
+	if res.Metrics != nil {
+		r.resultsMetrics.InspectedBytes += res.Metrics.InspectedBytes
+		r.resultsMetrics.InspectedTraces += res.Metrics.InspectedTraces
+		r.resultsMetrics.SkippedBlocks += res.Metrics.SkippedBlocks
+		r.resultsMetrics.SkippedTraces += res.Metrics.SkippedTraces
+	}
 }
 
 func (r *searchResponse) shouldQuit() bool {
@@ -339,7 +341,12 @@ func (s *searchSharder) backendRequests(ctx context.Context, tenantID string, pa
 		}
 
 		blockID := m.BlockID.String()
-		for startPage := 0; startPage < int(m.TotalRecords); startPage += pagesPerQuery {
+		for startPage := 0; startPage < int(m.TotalRecords); {
+			repeat := 1
+			if startPage+pagesPerQuery*9 < int(m.TotalRecords) {
+				repeat = 10
+			}
+
 			subR := parent.Clone(ctx)
 			subR.Header.Set(user.OrgIDHeaderName, tenantID)
 
@@ -352,7 +359,10 @@ func (s *searchSharder) backendRequests(ctx context.Context, tenantID string, pa
 				TotalRecords:  m.TotalRecords,
 				DataEncoding:  m.DataEncoding,
 				Version:       m.Version,
+				Repeat:        uint32(repeat),
 			})
+
+			startPage += pagesPerQuery * repeat
 
 			if err != nil {
 				return nil, err

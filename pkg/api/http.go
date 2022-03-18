@@ -37,6 +37,7 @@ const (
 	urlParamTotalRecords  = "totalRecords"
 	urlParamDataEncoding  = "dataEncoding"
 	urlParamVersion       = "version"
+	urlParamRepeat        = "repeat"
 
 	// maxBytes (serverless only)
 	urlParamMaxBytes = "maxBytes"
@@ -267,6 +268,16 @@ func ParseSearchBlockRequest(r *http.Request) (*tempopb.SearchBlockRequest, erro
 	}
 	req.Version = version
 
+	s = r.URL.Query().Get(urlParamRepeat)
+	repeat, err := strconv.ParseInt(s, 10, 32)
+	if err != nil {
+		return nil, fmt.Errorf("invalid repeat %s: %w", s, err)
+	}
+	if repeat <= 0 {
+		return nil, fmt.Errorf("repeat must be greater than 0. received %d", repeat)
+	}
+	req.Repeat = uint32(repeat)
+
 	return req, nil
 }
 
@@ -339,6 +350,7 @@ func BuildSearchBlockRequest(req *http.Request, searchReq *tempopb.SearchBlockRe
 	q.Set(urlParamTotalRecords, strconv.FormatUint(uint64(searchReq.TotalRecords), 10))
 	q.Set(urlParamDataEncoding, searchReq.DataEncoding)
 	q.Set(urlParamVersion, searchReq.Version)
+	q.Set(urlParamRepeat, strconv.FormatUint(uint64(searchReq.Repeat), 10))
 
 	req.URL.RawQuery = q.Encode()
 

@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"net/http"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/cristalhq/hedgedhttp"
@@ -395,6 +396,40 @@ func (q *Querier) SearchTagValues(ctx context.Context, req *tempopb.SearchTagVal
 
 // SearchBlock searches the specified subset of the block for the passed tags.
 func (q *Querier) SearchBlock(ctx context.Context, req *tempopb.SearchBlockRequest) (*tempopb.SearchResponse, error) {
+	resp := newSearchResponse(ctx, int(req.SearchReq.Limit))
+
+	wg := sync.WaitGroup{}
+	wg.Add(int(req.Repeat))
+
+	// do repeat searches
+	for i := 0; i < int(req.Repeat); i++ {
+		go func(idx int) {
+			defer wg.Done()
+
+			if resp.shouldQuit() {
+				return
+			}
+
+			clone := cloneWithRepeat(req, uint32(idx))
+
+			r, err := q.doOneSearch(ctx, clone)
+			if err != nil {
+				resp.setError(err)
+			}
+
+			resp.addResponse(r)
+		}(i)
+	}
+	wg.Wait()
+
+	if resp.err != nil {
+		return nil, resp.err
+	}
+
+	return resp.result(), nil
+}
+
+func (q *Querier) doOneSearch(ctx context.Context, req *tempopb.SearchBlockRequest) (*tempopb.SearchResponse, error) {
 	// if we have no external configuration always search in the querier
 	if len(q.cfg.Search.ExternalEndpoints) == 0 {
 		return q.internalSearchBlock(ctx, req)
@@ -526,4 +561,26 @@ func (q *Querier) searchExternalEndpoint(ctx context.Context, externalEndpoint s
 		return nil, fmt.Errorf("external endpoint failed to unmarshal body: %s, %w", string(body), err)
 	}
 	return &searchResp, nil
+}
+
+func cloneWithRepeat(req *tempopb.SearchBlockRequest, idx uint32) *tempopb.SearchBlockRequest {
+	return &tempopb.SearchBlockRequest{
+		SearchReq: &tempopb.SearchRequest{
+			Tags:          req.SearchReq.Tags,
+			MinDurationMs: req.SearchReq.MinDurationMs,
+			MaxDurationMs: req.SearchReq.MaxDurationMs,
+			Limit:         req.SearchReq.Limit,
+			Start:         req.SearchReq.Start,
+			End:           req.SearchReq.End,
+		},
+		BlockID:       req.BlockID,
+		StartPage:     req.StartPage + idx*req.PagesToSearch,
+		PagesToSearch: req.PagesToSearch,
+		Encoding:      req.Encoding,
+		IndexPageSize: req.IndexPageSize,
+		TotalRecords:  req.TotalRecords,
+		DataEncoding:  req.DataEncoding,
+		Version:       req.Version,
+		Repeat:        req.Repeat,
+	}
 }
