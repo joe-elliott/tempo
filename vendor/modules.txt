@@ -84,7 +84,7 @@ github.com/apache/thrift/lib/go/thrift
 ## explicit; go 1.12
 github.com/armon/go-metrics
 github.com/armon/go-metrics/prometheus
-# github.com/aws/aws-sdk-go v1.44.45
+# github.com/aws/aws-sdk-go v1.44.73
 ## explicit; go 1.11
 github.com/aws/aws-sdk-go/aws
 github.com/aws/aws-sdk-go/aws/arn
@@ -848,7 +848,7 @@ github.com/segmentio/encoding/thrift
 # github.com/segmentio/fasthash v0.0.0-20180216231524-a72b379d632e
 ## explicit
 github.com/segmentio/fasthash/fnv1a
-# github.com/segmentio/parquet-go v0.0.0-20220711225945-6dc5e4bb634a
+# github.com/segmentio/parquet-go v0.0.0-20220802221544-d84ed320251d
 ## explicit; go 1.18
 github.com/segmentio/parquet-go
 github.com/segmentio/parquet-go/bloom
