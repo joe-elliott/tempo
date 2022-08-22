@@ -307,8 +307,8 @@ github.com/aws/aws-sdk-go v1.40.11/go.mod h1:585smgzpB/KqRA+K3y/NL/oYRqQvpNJYvLm
 github.com/aws/aws-sdk-go v1.40.45/go.mod h1:585smgzpB/KqRA+K3y/NL/oYRqQvpNJYvLm+LY1U59Q=
 github.com/aws/aws-sdk-go v1.42.8/go.mod h1:585smgzpB/KqRA+K3y/NL/oYRqQvpNJYvLm+LY1U59Q=
 github.com/aws/aws-sdk-go v1.43.4/go.mod h1:OGr6lGMAKGlG9CVrYnWYDKIyb829c6EVBRjxqjmPepc=
-github.com/aws/aws-sdk-go v1.44.45 h1:E2i73X4QdVS0XrfX/aVPt/M0Su2IuJ7AFvAMtF0id1Q=
-github.com/aws/aws-sdk-go v1.44.45/go.mod h1:y4AeaBuwd2Lk+GepC1E9v0qOiTws0MIWAX4oIKwKHZo=
+github.com/aws/aws-sdk-go v1.44.82 h1:Miji7nHIMxTWfa831nZf8XAcMWGLaT+PvsS6CdbMG7M=
+github.com/aws/aws-sdk-go v1.44.82/go.mod h1:y4AeaBuwd2Lk+GepC1E9v0qOiTws0MIWAX4oIKwKHZo=
 github.com/aws/aws-sdk-go-v2 v0.18.0/go.mod h1:JWVYvqSMppoMJC0x5wdwiImzgXTI9FuZwxzkQq9wy+g=
 github.com/aws/aws-sdk-go-v2 v1.9.1/go.mod h1:cK/D0BBs0b/oWPIcX/Z/obahJK1TT7IPVjy53i/mX/4=
 github.com/aws/aws-sdk-go-v2 v1.9.2/go.mod h1:cK/D0BBs0b/oWPIcX/Z/obahJK1TT7IPVjy53i/mX/4=
@@ -1933,8 +1933,6 @@ github.com/segmentio/fasthash v0.0.0-20180216231524-a72b379d632e h1:uO75wNGioszj
 github.com/segmentio/fasthash v0.0.0-20180216231524-a72b379d632e/go.mod h1:tm/wZFQ8e24NYaBGIlnO2WGCAi67re4HHuOm0sftE/M=
 github.com/segmentio/kafka-go v0.1.0/go.mod h1:X6itGqS9L4jDletMsxZ7Dz+JFWxM6JHfPOCvTvk+EJo=
 github.com/segmentio/kafka-go v0.2.0/go.mod h1:X6itGqS9L4jDletMsxZ7Dz+JFWxM6JHfPOCvTvk+EJo=
-github.com/segmentio/parquet-go v0.0.0-20220802221544-d84ed320251d h1:IxYmTiYCMaR3B0fjD9igXDr1AE5M8KRFbhEhEJ1WYx4=
-github.com/segmentio/parquet-go v0.0.0-20220802221544-d84ed320251d/go.mod h1:BuMbRhCCg3gFchup9zucJaUjQ4m6RxX+iVci37CoMPQ=
 github.com/segmentio/parquet-go v0.0.0-20220811205829-7efc157d28af h1:DTVh/gwrdXKC418tn2hLECLC+/XaYZ+5yngQZtHlzzw=
 github.com/segmentio/parquet-go v0.0.0-20220811205829-7efc157d28af/go.mod h1:PxYdAI6cGd+s1j4hZDQbz3VFgobF5fDA0weLeNWKTE4=
 github.com/sercand/kuberesolver v2.1.0+incompatible/go.mod h1:lWF3GL0xptCB/vCiJPl/ZshwPsX/n4Y7u0CW9E7aQIQ=
