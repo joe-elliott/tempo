@@ -11,7 +11,7 @@ require (
 	github.com/Azure/go-autorest/autorest/azure/auth v0.5.11
 	github.com/alecthomas/kong v0.2.11
 	github.com/alicebob/miniredis/v2 v2.21.0
-	github.com/aws/aws-sdk-go v1.44.45
+	github.com/aws/aws-sdk-go v1.44.89
 	github.com/bradfitz/gomemcache v0.0.0-20190913173617-a41fca850d0b
 	github.com/cespare/xxhash v1.1.0
 	github.com/cespare/xxhash/v2 v2.1.2
@@ -62,7 +62,7 @@ require (
 	github.com/prometheus/prometheus v1.8.2-0.20220228151929-e25a59925555
 	github.com/prometheus/statsd_exporter v0.21.0 // indirect
 	github.com/segmentio/fasthash v0.0.0-20180216231524-a72b379d632e
-	github.com/segmentio/parquet-go v0.0.0-20220811205829-7efc157d28af
+	github.com/segmentio/parquet-go v0.0.0-20220829181003-2ef012b80dbc
 	github.com/sirupsen/logrus v1.8.1
 	github.com/sony/gobreaker v0.4.1
 	github.com/spf13/viper v1.12.0
