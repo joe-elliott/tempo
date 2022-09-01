@@ -80,7 +80,7 @@
       ],
     ) + service.mixin.spec.withClusterIp('None'),  // headless service
 
-  local podDisruptionBudget = k.policy.v1beta1.podDisruptionBudget,
+  local podDisruptionBudget = k.policy.v1.podDisruptionBudget,
   ingester_pdb:
     podDisruptionBudget.new() +
     podDisruptionBudget.mixin.metadata.withName(target_name) +
