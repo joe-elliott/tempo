@@ -1115,7 +1115,7 @@ go.opentelemetry.io/collector/service/internal/telemetry
 go.opentelemetry.io/collector/service/internal/telemetrylogs
 go.opentelemetry.io/collector/service/internal/zpages
 go.opentelemetry.io/collector/service/telemetry
-# go.opentelemetry.io/collector/model v0.46.0
+# go.opentelemetry.io/collector/model v0.50.0
 ## explicit; go 1.17
 go.opentelemetry.io/collector/model/semconv/v1.5.0
 # go.opentelemetry.io/collector/pdata v0.57.2
