@@ -36,15 +36,15 @@ func (d *ObjectDecoder) PrepareForRead(obj []byte) (*tempopb.Trace, error) {
 	}
 
 	trace := &tempopb.Trace{}
-	traceBytes := &tempopb.TraceBytes{}
+	traceBytes := tempopb.TraceBytesFromVTPool()
 	err = proto.Unmarshal(obj, traceBytes)
 	if err != nil {
 		return nil, err
 	}
 
 	for _, bytes := range traceBytes.Traces {
-		innerTrace := &tempopb.Trace{}
-		err = proto.Unmarshal(bytes, innerTrace)
+		innerTrace := tempopb.TraceFromVTPool()
+		err = innerTrace.UnmarshalVT(bytes)
 		if err != nil {
 			return nil, err
 		}
@@ -86,6 +86,9 @@ func (d *ObjectDecoder) Matches(id []byte, obj []byte, req *tempopb.SearchReques
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		t.ReturnToVTPool()
+	}()
 
 	return trace.MatchesProto(id, t, req)
 }

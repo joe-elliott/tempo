@@ -3,7 +3,9 @@ syntax="proto3";
 package tempopb;
 
 import "trace/v1/trace.proto";
-import "github.com/gogo/protobuf/gogoproto/gogo.proto";
+import "pkg/tempopb/vtproto/ext.proto";
+
+option go_package = "pkg/tempopb";
 
 service Pusher {
   // different versions of PushBytes expect the trace data to be pushed in different formats
@@ -43,7 +45,7 @@ message TraceByIDMetrics {
 // SearchRequest takes no block parameters and implies a "recent traces" search
 message SearchRequest {
   // case insensitive partial match
-  map<string, string> Tags = 1 [(gogoproto.nullable) = false];
+  map<string, string> Tags = 1;
   uint32 MinDurationMs = 2;
   uint32 MaxDurationMs = 3;
   uint32 Limit = 4;
@@ -107,6 +109,7 @@ message SearchTagValuesResponse {
 }
 
 message Trace {
+  option (vtproto.mempool) = true;
   repeated tempopb.trace.v1.ResourceSpans batches = 1;
 }
 
@@ -118,11 +121,11 @@ message PushResponse {
 //  current BatchDecoder in ./pkg/model
 message PushBytesRequest {
   // pre-marshalled Traces. length must match ids
-  repeated bytes traces = 2 [(gogoproto.nullable) = false, (gogoproto.customtype) = "PreallocBytes"];
+  repeated bytes traces = 2;
   // trace ids. length must match traces
-  repeated bytes ids = 3 [(gogoproto.nullable) = false, (gogoproto.customtype) = "PreallocBytes"];
+  repeated bytes ids = 3;
   // search data, length must match traces
-  repeated bytes searchData = 4 [(gogoproto.nullable) = false, (gogoproto.customtype) = "PreallocBytes"];
+  repeated bytes searchData = 4;
 }
 
 message PushSpansRequest {
@@ -131,6 +134,8 @@ message PushSpansRequest {
 }
 
 message TraceBytes {
+  option (vtproto.mempool) = true;
+
   // pre-marshalled Traces
   repeated bytes traces = 1;
 }

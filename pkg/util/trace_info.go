@@ -210,7 +210,7 @@ func (t *TraceInfo) ConstructTraceFromEpoch() (*tempopb.Trace, error) {
 			}
 
 			t := tempopb.Trace{}
-			err = t.Unmarshal(conv)
+			err = t.UnmarshalVT(conv)
 			if err != nil {
 				return err
 			}

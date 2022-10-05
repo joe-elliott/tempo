@@ -11,7 +11,7 @@ GOPATH := $(shell go env GOPATH)
 GORELEASER := $(GOPATH)/bin/goreleaser
 
 # Build Images
-DOCKER_PROTOBUF_IMAGE ?= otel/build-protobuf:0.14.0
+DOCKER_PROTOBUF_IMAGE ?= build-img:latest # Dockerfile for build-img in ./img # otel/build-protobuf:0.14.0 
 FLATBUFFERS_IMAGE ?= neomantra/flatbuffers
 LOKI_BUILD_IMAGE ?= grafana/loki-build-image:0.21.0
 DOCS_IMAGE ?= grafana/docs-base:latest
@@ -140,15 +140,17 @@ endif
 PROTOC = docker run --rm -u ${shell id -u} -v${PWD}:${PWD} -w${PWD} ${DOCKER_PROTOBUF_IMAGE} --proto_path=${PWD}
 PROTO_INTERMEDIATE_DIR = pkg/.patched-proto
 PROTO_INCLUDES = -I$(PROTO_INTERMEDIATE_DIR)
-PROTO_GEN = $(PROTOC) $(PROTO_INCLUDES) --gogofaster_out=plugins=grpc,paths=source_relative:$(2) $(1)
+# PROTO_GEN = $(PROTOC) $(PROTO_INCLUDES) --gogofaster_out=plugins=grpc,paths=source_relative:$(2) $(1)
 PROTO_GEN_WITH_VENDOR = $(PROTOC) $(PROTO_INCLUDES) -Ivendor --gogofaster_out=plugins=grpc,paths=source_relative:$(2) $(1)
+PROTO_GEN = $(PROTOC) $(PROTO_INCLUDES) --go_out=paths=source_relative:$(2) --go-grpc_out=paths=source_relative:$(2) --go-vtproto_out=paths=source_relative:$(2) --go-vtproto_opt=features=marshal+unmarshal+size+pool $(1)
+# PROTO_GEN_WITH_VENDOR = $(PROTOC) $(PROTO_INCLUDES) -Ivendor --go-vtproto_out=paths=source_relative:$(2) --go-vtproto_opt=features=marshal+unmarshal+size $(1)
 
 .PHONY: gen-proto
 gen-proto:
 	@echo --
 	@echo -- Deleting existing
 	@echo --
-	rm -rf opentelemetry-proto
+	# rm -rf opentelemetry-proto
 	rm -rf $(PROTO_INTERMEDIATE_DIR)
 	find pkg/tempopb -name *.pb.go | xargs -L 1 -I rm
 	# Here we avoid removing our tempo.proto and our frontend.proto due to reliance on the gogoproto bits.
@@ -157,7 +159,7 @@ gen-proto:
 	@echo --
 	@echo -- Copying to $(PROTO_INTERMEDIATE_DIR)
 	@echo --
-	git submodule update --init
+	# git submodule update --init
 	mkdir -p $(PROTO_INTERMEDIATE_DIR)
 	cp -R opentelemetry-proto/opentelemetry/proto/* $(PROTO_INTERMEDIATE_DIR)
 
