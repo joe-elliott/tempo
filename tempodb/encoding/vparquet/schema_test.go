@@ -101,7 +101,7 @@ func TestFieldsAreCleared(t *testing.T) {
 	_ = traceToParquet(traceID, complexTrace, tr)
 	parqTr := traceToParquet(traceID, simpleTrace, tr)
 	actualTrace := parquetTraceToTempopbTrace(parqTr)
-	require.Equal(t, simpleTrace, actualTrace)
+	test.TraceEqual(t, simpleTrace, actualTrace)
 }
 
 func BenchmarkProtoToParquet(b *testing.B) {
@@ -213,7 +213,7 @@ func TestParquetRowSizeEstimate(t *testing.T) {
 
 			id := test.ValidTraceID(nil)
 			tr := test.MakeTraceWithSpanCount(batchCount, spanCount, id)
-			proto, _ := tr.Marshal()
+			proto, _ := tr.MarshalVT()
 			fmt.Println("Size of proto is:", len(proto))
 
 			parq := traceToParquet(id, tr, nil)

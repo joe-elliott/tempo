@@ -1,7 +1,6 @@
 package querier
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -12,7 +11,6 @@ import (
 
 	"github.com/cristalhq/hedgedhttp"
 	"github.com/go-kit/log/level"
-	"github.com/gogo/protobuf/jsonpb"
 	"github.com/google/uuid"
 	"github.com/grafana/dskit/ring"
 	ring_client "github.com/grafana/dskit/ring/client"
@@ -26,6 +24,7 @@ import (
 	"github.com/weaveworks/common/user"
 	"go.uber.org/multierr"
 	"golang.org/x/sync/semaphore"
+	"google.golang.org/protobuf/encoding/protojson"
 
 	ingester_client "github.com/grafana/tempo/modules/ingester/client"
 	"github.com/grafana/tempo/modules/overrides"
@@ -441,7 +440,7 @@ func (q *Querier) internalSearchBlock(ctx context.Context, req *tempopb.SearchBl
 		Version:       req.Version,
 		TenantID:      tenantID,
 		Encoding:      enc,
-		Size:          req.Size_,
+		Size:          req.Size,
 		IndexPageSize: req.IndexPageSize,
 		TotalRecords:  req.TotalRecords,
 		BlockID:       blockID,
@@ -527,7 +526,7 @@ func (q *Querier) searchExternalEndpoint(ctx context.Context, externalEndpoint s
 		return nil, fmt.Errorf("external endpoint returned %d, %s", resp.StatusCode, string(body))
 	}
 	var searchResp tempopb.SearchResponse
-	err = jsonpb.Unmarshal(bytes.NewReader(body), &searchResp)
+	err = protojson.Unmarshal(body, &searchResp)
 	if err != nil {
 		return nil, fmt.Errorf("external endpoint failed to unmarshal body: %s, %w", string(body), err)
 	}

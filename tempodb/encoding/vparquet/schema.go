@@ -385,10 +385,14 @@ func eventToParquet(e *v1_trace.Span_Event, ee *Event) {
 	ee.DroppedAttributesCount = int32(e.DroppedAttributesCount)
 
 	ee.Attrs = extendReuseSlice(len(e.Attributes), ee.Attrs)
-	for i, a := range e.Attributes {
-		ee.Attrs[i].Key = a.Key
-		ee.Attrs[i].Value = extendReuseSlice(a.Value.Size(), ee.Attrs[i].Value)
-		_, _ = a.Value.MarshalToSizedBuffer(ee.Attrs[i].Value)
+	for _, a := range e.Attributes {
+		b := make([]byte, a.Value.SizeVT())
+		_, _ = a.Value.MarshalToSizedBufferVT(b)
+
+		ee.Attrs = append(ee.Attrs, EventAttribute{
+			Key:   a.Key,
+			Value: b,
+		})
 	}
 }
 
@@ -455,7 +459,7 @@ func parquetToProtoEvents(parquetEvents []Event) []*v1_trace.Span_Event {
 
 					// event attributes are currently encoded as proto, but were previously json.
 					//  this code attempts proto first and, if there was an error, falls back to json
-					err := protoAttr.Value.Unmarshal(a.Value)
+					err := protoAttr.Value.UnmarshalVT(a.Value)
 					if err != nil {
 						_ = jsonpb.Unmarshal(bytes.NewBuffer(a.Value), protoAttr.Value)
 					}

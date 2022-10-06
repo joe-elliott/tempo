@@ -4,16 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"strconv"
 	"testing"
 
 	"github.com/go-kit/log"
-	"github.com/gogo/protobuf/jsonpb"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/encoding/protojson" // jpe is this backwards compat?
 
 	"github.com/grafana/tempo/modules/generator/registry"
 	"github.com/grafana/tempo/pkg/tempopb"
@@ -157,7 +158,15 @@ func loadTestData(path string) (*tempopb.PushSpansRequest, error) {
 	}
 
 	trace := &tempopb.Trace{}
-	err = jsonpb.Unmarshal(f, trace)
+	buff, err := io.ReadAll(f)
+	if err != nil {
+		return nil, err
+	}
+	err = protojson.Unmarshal(buff, trace)
+	if err != nil {
+		return nil, err
+	}
+
 	return &tempopb.PushSpansRequest{Batches: trace.Batches}, err
 }
 

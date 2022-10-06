@@ -13,6 +13,7 @@ import (
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	io "io"
 	bits "math/bits"
+	sync "sync"
 )
 
 const (
@@ -131,10 +132,10 @@ func (m *ResourceSpans) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		}
 	}
 	if m.Resource != nil {
-		if marshalto, ok := interface{}(m.Resource).(interface {
+		if vtmsg, ok := interface{}(m.Resource).(interface {
 			MarshalToSizedBufferVT([]byte) (int, error)
 		}); ok {
-			size, err := marshalto.MarshalToSizedBufferVT(dAtA[:i])
+			size, err := vtmsg.MarshalToSizedBufferVT(dAtA[:i])
 			if err != nil {
 				return 0, err
 			}
@@ -205,10 +206,10 @@ func (m *ScopeSpans) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		}
 	}
 	if m.Scope != nil {
-		if marshalto, ok := interface{}(m.Scope).(interface {
+		if vtmsg, ok := interface{}(m.Scope).(interface {
 			MarshalToSizedBufferVT([]byte) (int, error)
 		}); ok {
-			size, err := marshalto.MarshalToSizedBufferVT(dAtA[:i])
+			size, err := vtmsg.MarshalToSizedBufferVT(dAtA[:i])
 			if err != nil {
 				return 0, err
 			}
@@ -279,10 +280,10 @@ func (m *InstrumentationLibrarySpans) MarshalToSizedBufferVT(dAtA []byte) (int, 
 		}
 	}
 	if m.InstrumentationLibrary != nil {
-		if marshalto, ok := interface{}(m.InstrumentationLibrary).(interface {
+		if vtmsg, ok := interface{}(m.InstrumentationLibrary).(interface {
 			MarshalToSizedBufferVT([]byte) (int, error)
 		}); ok {
-			size, err := marshalto.MarshalToSizedBufferVT(dAtA[:i])
+			size, err := vtmsg.MarshalToSizedBufferVT(dAtA[:i])
 			if err != nil {
 				return 0, err
 			}
@@ -340,10 +341,10 @@ func (m *Span_Event) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 	}
 	if len(m.Attributes) > 0 {
 		for iNdEx := len(m.Attributes) - 1; iNdEx >= 0; iNdEx-- {
-			if marshalto, ok := interface{}(m.Attributes[iNdEx]).(interface {
+			if vtmsg, ok := interface{}(m.Attributes[iNdEx]).(interface {
 				MarshalToSizedBufferVT([]byte) (int, error)
 			}); ok {
-				size, err := marshalto.MarshalToSizedBufferVT(dAtA[:i])
+				size, err := vtmsg.MarshalToSizedBufferVT(dAtA[:i])
 				if err != nil {
 					return 0, err
 				}
@@ -415,10 +416,10 @@ func (m *Span_Link) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 	}
 	if len(m.Attributes) > 0 {
 		for iNdEx := len(m.Attributes) - 1; iNdEx >= 0; iNdEx-- {
-			if marshalto, ok := interface{}(m.Attributes[iNdEx]).(interface {
+			if vtmsg, ok := interface{}(m.Attributes[iNdEx]).(interface {
 				MarshalToSizedBufferVT([]byte) (int, error)
 			}); ok {
-				size, err := marshalto.MarshalToSizedBufferVT(dAtA[:i])
+				size, err := vtmsg.MarshalToSizedBufferVT(dAtA[:i])
 				if err != nil {
 					return 0, err
 				}
@@ -542,10 +543,10 @@ func (m *Span) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 	}
 	if len(m.Attributes) > 0 {
 		for iNdEx := len(m.Attributes) - 1; iNdEx >= 0; iNdEx-- {
-			if marshalto, ok := interface{}(m.Attributes[iNdEx]).(interface {
+			if vtmsg, ok := interface{}(m.Attributes[iNdEx]).(interface {
 				MarshalToSizedBufferVT([]byte) (int, error)
 			}); ok {
-				size, err := marshalto.MarshalToSizedBufferVT(dAtA[:i])
+				size, err := vtmsg.MarshalToSizedBufferVT(dAtA[:i])
 				if err != nil {
 					return 0, err
 				}
@@ -675,6 +676,148 @@ func encodeVarint(dAtA []byte, offset int, v uint64) int {
 	dAtA[offset] = uint8(v)
 	return base
 }
+
+var vtprotoPool_TracesData = sync.Pool{
+	New: func() interface{} {
+		return &TracesData{}
+	},
+}
+
+func (m *TracesData) ResetVT() {
+	for _, mm := range m.ResourceSpans {
+		mm.ResetVT()
+	}
+	m.Reset()
+}
+func (m *TracesData) ReturnToVTPool() {
+	if m != nil {
+		m.ResetVT()
+		vtprotoPool_TracesData.Put(m)
+	}
+}
+func TracesDataFromVTPool() *TracesData {
+	return vtprotoPool_TracesData.Get().(*TracesData)
+}
+
+var vtprotoPool_ResourceSpans = sync.Pool{
+	New: func() interface{} {
+		return &ResourceSpans{}
+	},
+}
+
+func (m *ResourceSpans) ResetVT() {
+	m.Resource.ReturnToVTPool()
+	for _, mm := range m.ScopeSpans {
+		mm.ResetVT()
+	}
+	for _, mm := range m.InstrumentationLibrarySpans {
+		mm.ResetVT()
+	}
+	m.Reset()
+}
+func (m *ResourceSpans) ReturnToVTPool() {
+	if m != nil {
+		m.ResetVT()
+		vtprotoPool_ResourceSpans.Put(m)
+	}
+}
+func ResourceSpansFromVTPool() *ResourceSpans {
+	return vtprotoPool_ResourceSpans.Get().(*ResourceSpans)
+}
+
+var vtprotoPool_ScopeSpans = sync.Pool{
+	New: func() interface{} {
+		return &ScopeSpans{}
+	},
+}
+
+func (m *ScopeSpans) ResetVT() {
+	m.Scope.ReturnToVTPool()
+	for _, mm := range m.Spans {
+		mm.ResetVT()
+	}
+	m.Reset()
+}
+func (m *ScopeSpans) ReturnToVTPool() {
+	if m != nil {
+		m.ResetVT()
+		vtprotoPool_ScopeSpans.Put(m)
+	}
+}
+func ScopeSpansFromVTPool() *ScopeSpans {
+	return vtprotoPool_ScopeSpans.Get().(*ScopeSpans)
+}
+
+var vtprotoPool_InstrumentationLibrarySpans = sync.Pool{
+	New: func() interface{} {
+		return &InstrumentationLibrarySpans{}
+	},
+}
+
+func (m *InstrumentationLibrarySpans) ResetVT() {
+	m.InstrumentationLibrary.ReturnToVTPool()
+	for _, mm := range m.Spans {
+		mm.ResetVT()
+	}
+	m.Reset()
+}
+func (m *InstrumentationLibrarySpans) ReturnToVTPool() {
+	if m != nil {
+		m.ResetVT()
+		vtprotoPool_InstrumentationLibrarySpans.Put(m)
+	}
+}
+func InstrumentationLibrarySpansFromVTPool() *InstrumentationLibrarySpans {
+	return vtprotoPool_InstrumentationLibrarySpans.Get().(*InstrumentationLibrarySpans)
+}
+
+var vtprotoPool_Span = sync.Pool{
+	New: func() interface{} {
+		return &Span{}
+	},
+}
+
+func (m *Span) ResetVT() {
+	f0 := m.TraceId[:0]
+	f1 := m.SpanId[:0]
+	f2 := m.ParentSpanId[:0]
+	for _, mm := range m.Attributes {
+		mm.ResetVT()
+	}
+	m.Status.ReturnToVTPool()
+	m.Reset()
+	m.TraceId = f0
+	m.SpanId = f1
+	m.ParentSpanId = f2
+}
+func (m *Span) ReturnToVTPool() {
+	if m != nil {
+		m.ResetVT()
+		vtprotoPool_Span.Put(m)
+	}
+}
+func SpanFromVTPool() *Span {
+	return vtprotoPool_Span.Get().(*Span)
+}
+
+var vtprotoPool_Status = sync.Pool{
+	New: func() interface{} {
+		return &Status{}
+	},
+}
+
+func (m *Status) ResetVT() {
+	m.Reset()
+}
+func (m *Status) ReturnToVTPool() {
+	if m != nil {
+		m.ResetVT()
+		vtprotoPool_Status.Put(m)
+	}
+}
+func StatusFromVTPool() *Status {
+	return vtprotoPool_Status.Get().(*Status)
+}
 func (m *TracesData) SizeVT() (n int) {
 	if m == nil {
 		return 0
@@ -687,9 +830,7 @@ func (m *TracesData) SizeVT() (n int) {
 			n += 1 + l + sov(uint64(l))
 		}
 	}
-	if m.unknownFields != nil {
-		n += len(m.unknownFields)
-	}
+	n += len(m.unknownFields)
 	return n
 }
 
@@ -725,9 +866,7 @@ func (m *ResourceSpans) SizeVT() (n int) {
 			n += 2 + l + sov(uint64(l))
 		}
 	}
-	if m.unknownFields != nil {
-		n += len(m.unknownFields)
-	}
+	n += len(m.unknownFields)
 	return n
 }
 
@@ -757,9 +896,7 @@ func (m *ScopeSpans) SizeVT() (n int) {
 	if l > 0 {
 		n += 1 + l + sov(uint64(l))
 	}
-	if m.unknownFields != nil {
-		n += len(m.unknownFields)
-	}
+	n += len(m.unknownFields)
 	return n
 }
 
@@ -789,9 +926,7 @@ func (m *InstrumentationLibrarySpans) SizeVT() (n int) {
 	if l > 0 {
 		n += 1 + l + sov(uint64(l))
 	}
-	if m.unknownFields != nil {
-		n += len(m.unknownFields)
-	}
+	n += len(m.unknownFields)
 	return n
 }
 
@@ -823,9 +958,7 @@ func (m *Span_Event) SizeVT() (n int) {
 	if m.DroppedAttributesCount != 0 {
 		n += 1 + sov(uint64(m.DroppedAttributesCount))
 	}
-	if m.unknownFields != nil {
-		n += len(m.unknownFields)
-	}
+	n += len(m.unknownFields)
 	return n
 }
 
@@ -862,9 +995,7 @@ func (m *Span_Link) SizeVT() (n int) {
 	if m.DroppedAttributesCount != 0 {
 		n += 1 + sov(uint64(m.DroppedAttributesCount))
 	}
-	if m.unknownFields != nil {
-		n += len(m.unknownFields)
-	}
+	n += len(m.unknownFields)
 	return n
 }
 
@@ -940,9 +1071,7 @@ func (m *Span) SizeVT() (n int) {
 		l = m.Status.SizeVT()
 		n += 1 + l + sov(uint64(l))
 	}
-	if m.unknownFields != nil {
-		n += len(m.unknownFields)
-	}
+	n += len(m.unknownFields)
 	return n
 }
 
@@ -959,9 +1088,7 @@ func (m *Status) SizeVT() (n int) {
 	if m.Code != 0 {
 		n += 1 + sov(uint64(m.Code))
 	}
-	if m.unknownFields != nil {
-		n += len(m.unknownFields)
-	}
+	n += len(m.unknownFields)
 	return n
 }
 
@@ -1029,7 +1156,14 @@ func (m *TracesData) UnmarshalVT(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.ResourceSpans = append(m.ResourceSpans, &ResourceSpans{})
+			if len(m.ResourceSpans) == cap(m.ResourceSpans) {
+				m.ResourceSpans = append(m.ResourceSpans, &ResourceSpans{})
+			} else {
+				m.ResourceSpans = m.ResourceSpans[:len(m.ResourceSpans)+1]
+				if m.ResourceSpans[len(m.ResourceSpans)-1] == nil {
+					m.ResourceSpans[len(m.ResourceSpans)-1] = &ResourceSpans{}
+				}
+			}
 			if err := m.ResourceSpans[len(m.ResourceSpans)-1].UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
@@ -1115,7 +1249,7 @@ func (m *ResourceSpans) UnmarshalVT(dAtA []byte) error {
 				return io.ErrUnexpectedEOF
 			}
 			if m.Resource == nil {
-				m.Resource = &v1.Resource{}
+				m.Resource = v1.ResourceFromVTPool()
 			}
 			if unmarshal, ok := interface{}(m.Resource).(interface {
 				UnmarshalVT([]byte) error
@@ -1158,7 +1292,14 @@ func (m *ResourceSpans) UnmarshalVT(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.ScopeSpans = append(m.ScopeSpans, &ScopeSpans{})
+			if len(m.ScopeSpans) == cap(m.ScopeSpans) {
+				m.ScopeSpans = append(m.ScopeSpans, &ScopeSpans{})
+			} else {
+				m.ScopeSpans = m.ScopeSpans[:len(m.ScopeSpans)+1]
+				if m.ScopeSpans[len(m.ScopeSpans)-1] == nil {
+					m.ScopeSpans[len(m.ScopeSpans)-1] = &ScopeSpans{}
+				}
+			}
 			if err := m.ScopeSpans[len(m.ScopeSpans)-1].UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
@@ -1224,7 +1365,14 @@ func (m *ResourceSpans) UnmarshalVT(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.InstrumentationLibrarySpans = append(m.InstrumentationLibrarySpans, &InstrumentationLibrarySpans{})
+			if len(m.InstrumentationLibrarySpans) == cap(m.InstrumentationLibrarySpans) {
+				m.InstrumentationLibrarySpans = append(m.InstrumentationLibrarySpans, &InstrumentationLibrarySpans{})
+			} else {
+				m.InstrumentationLibrarySpans = m.InstrumentationLibrarySpans[:len(m.InstrumentationLibrarySpans)+1]
+				if m.InstrumentationLibrarySpans[len(m.InstrumentationLibrarySpans)-1] == nil {
+					m.InstrumentationLibrarySpans[len(m.InstrumentationLibrarySpans)-1] = &InstrumentationLibrarySpans{}
+				}
+			}
 			if err := m.InstrumentationLibrarySpans[len(m.InstrumentationLibrarySpans)-1].UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
@@ -1310,7 +1458,7 @@ func (m *ScopeSpans) UnmarshalVT(dAtA []byte) error {
 				return io.ErrUnexpectedEOF
 			}
 			if m.Scope == nil {
-				m.Scope = &v11.InstrumentationScope{}
+				m.Scope = v11.InstrumentationScopeFromVTPool()
 			}
 			if unmarshal, ok := interface{}(m.Scope).(interface {
 				UnmarshalVT([]byte) error
@@ -1353,7 +1501,14 @@ func (m *ScopeSpans) UnmarshalVT(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Spans = append(m.Spans, &Span{})
+			if len(m.Spans) == cap(m.Spans) {
+				m.Spans = append(m.Spans, &Span{})
+			} else {
+				m.Spans = m.Spans[:len(m.Spans)+1]
+				if m.Spans[len(m.Spans)-1] == nil {
+					m.Spans[len(m.Spans)-1] = &Span{}
+				}
+			}
 			if err := m.Spans[len(m.Spans)-1].UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
@@ -1471,7 +1626,7 @@ func (m *InstrumentationLibrarySpans) UnmarshalVT(dAtA []byte) error {
 				return io.ErrUnexpectedEOF
 			}
 			if m.InstrumentationLibrary == nil {
-				m.InstrumentationLibrary = &v11.InstrumentationLibrary{}
+				m.InstrumentationLibrary = v11.InstrumentationLibraryFromVTPool()
 			}
 			if unmarshal, ok := interface{}(m.InstrumentationLibrary).(interface {
 				UnmarshalVT([]byte) error
@@ -1514,7 +1669,14 @@ func (m *InstrumentationLibrarySpans) UnmarshalVT(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Spans = append(m.Spans, &Span{})
+			if len(m.Spans) == cap(m.Spans) {
+				m.Spans = append(m.Spans, &Span{})
+			} else {
+				m.Spans = m.Spans[:len(m.Spans)+1]
+				if m.Spans[len(m.Spans)-1] == nil {
+					m.Spans[len(m.Spans)-1] = &Span{}
+				}
+			}
 			if err := m.Spans[len(m.Spans)-1].UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
@@ -2202,7 +2364,14 @@ func (m *Span) UnmarshalVT(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Attributes = append(m.Attributes, &v11.KeyValue{})
+			if len(m.Attributes) == cap(m.Attributes) {
+				m.Attributes = append(m.Attributes, &v11.KeyValue{})
+			} else {
+				m.Attributes = m.Attributes[:len(m.Attributes)+1]
+				if m.Attributes[len(m.Attributes)-1] == nil {
+					m.Attributes[len(m.Attributes)-1] = &v11.KeyValue{}
+				}
+			}
 			if unmarshal, ok := interface{}(m.Attributes[len(m.Attributes)-1]).(interface {
 				UnmarshalVT([]byte) error
 			}); ok {
@@ -2263,7 +2432,14 @@ func (m *Span) UnmarshalVT(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Events = append(m.Events, &Span_Event{})
+			if len(m.Events) == cap(m.Events) {
+				m.Events = append(m.Events, &Span_Event{})
+			} else {
+				m.Events = m.Events[:len(m.Events)+1]
+				if m.Events[len(m.Events)-1] == nil {
+					m.Events[len(m.Events)-1] = &Span_Event{}
+				}
+			}
 			if err := m.Events[len(m.Events)-1].UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
@@ -2316,7 +2492,14 @@ func (m *Span) UnmarshalVT(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Links = append(m.Links, &Span_Link{})
+			if len(m.Links) == cap(m.Links) {
+				m.Links = append(m.Links, &Span_Link{})
+			} else {
+				m.Links = m.Links[:len(m.Links)+1]
+				if m.Links[len(m.Links)-1] == nil {
+					m.Links[len(m.Links)-1] = &Span_Link{}
+				}
+			}
 			if err := m.Links[len(m.Links)-1].UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
@@ -2370,7 +2553,7 @@ func (m *Span) UnmarshalVT(dAtA []byte) error {
 				return io.ErrUnexpectedEOF
 			}
 			if m.Status == nil {
-				m.Status = &Status{}
+				m.Status = StatusFromVTPool()
 			}
 			if err := m.Status.UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
 				return err

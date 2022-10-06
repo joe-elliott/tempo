@@ -35,6 +35,7 @@ var ErrReadOnly = errors.New("metrics-generator is shutting down")
 
 type Generator struct {
 	services.Service
+	tempopb.UnimplementedMetricsGeneratorServer
 
 	cfg       *Config
 	overrides metricsGeneratorOverrides

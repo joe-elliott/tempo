@@ -51,6 +51,7 @@ func CreateBlock(ctx context.Context, cfg *common.BlockConfig, meta *backend.Blo
 		if err != nil {
 			return nil, err
 		}
+		tr.ReturnToVTPool()
 
 		// Here we repurpose RowGroupSizeBytes as number of raw column values.
 		// This is a fairly close approximation.

@@ -289,7 +289,7 @@ func ParseSearchBlockRequest(r *http.Request) (*tempopb.SearchBlockRequest, erro
 	if err != nil {
 		return nil, fmt.Errorf("invalid size %s: %w", s, err)
 	}
-	req.Size_ = size
+	req.Size = size
 
 	// Footer size can be 0 for some blocks, just ensure we
 	// get a valid integer.
@@ -367,7 +367,7 @@ func BuildSearchBlockRequest(req *http.Request, searchReq *tempopb.SearchBlockRe
 	}
 
 	q := req.URL.Query()
-	q.Set(urlParamSize, strconv.FormatUint(searchReq.Size_, 10))
+	q.Set(urlParamSize, strconv.FormatUint(searchReq.Size, 10))
 	q.Set(urlParamBlockID, searchReq.BlockID)
 	q.Set(urlParamStartPage, strconv.FormatUint(uint64(searchReq.StartPage), 10))
 	q.Set(urlParamPagesToSearch, strconv.FormatUint(uint64(searchReq.PagesToSearch), 10))

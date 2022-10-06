@@ -147,6 +147,7 @@ PROTO_GEN = $(PROTOC) $(PROTO_INCLUDES) --go_out=paths=source_relative:$(2) --go
 
 .PHONY: gen-proto
 gen-proto:
+    # add mempool everywhere?
 	@echo --
 	@echo -- Deleting existing
 	@echo --
@@ -177,6 +178,10 @@ gen-proto:
 
 	@# Update import paths
 	find $(PROTO_INTERMEDIATE_DIR) -name "*.proto" | xargs -L 1 sed -i $(SED_OPTS) 's+import "opentelemetry/proto/+import "+g'
+
+	@# Add import and mempool directive to all messages jpe - do we need/want this? or is the root good enough?
+	find $(PROTO_INTERMEDIATE_DIR) -name "*.proto" | xargs -L 1 sed -i $(SED_OPTS) 's+^syntax = "proto3";+& import "pkg/tempopb/vtproto/ext.proto";+g'
+	find $(PROTO_INTERMEDIATE_DIR) -name "*.proto" | xargs -L 1 sed -i $(SED_OPTS) 's+^message .* {+& option (vtproto.mempool) = true;+g'
 
 	@echo --
 	@echo -- Gen proto --

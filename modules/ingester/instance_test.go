@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/grafana/tempo/modules/overrides"
 	"github.com/grafana/tempo/pkg/model"
@@ -139,7 +140,7 @@ func queryAll(t *testing.T, i *instance, ids [][]byte, traces []*tempopb.Trace) 
 	for j, id := range ids {
 		trace, err := i.FindTraceByID(context.Background(), id)
 		require.NoError(t, err)
-		require.Equal(t, traces[j], trace)
+		require.True(t, proto.Equal(traces[j], trace))
 	}
 }
 
@@ -579,7 +580,7 @@ func BenchmarkInstancePush(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		// Rotate trace ID
-		binary.LittleEndian.PutUint32(request.Ids[0].Slice, uint32(i))
+		binary.LittleEndian.PutUint32(request.Ids[0], uint32(i))
 		err := instance.PushBytesRequest(context.Background(), request)
 		require.NoError(b, err)
 	}
@@ -623,7 +624,7 @@ func makeRequestWithByteLimit(maxBytes int, traceID []byte) *tempopb.PushBytesRe
 	traceID = test.ValidTraceID(traceID)
 	batch := test.MakeBatch(1, traceID)
 
-	for batch.Size() < maxBytes {
+	for batch.SizeVT() < maxBytes {
 		batch.ScopeSpans[0].Spans = append(batch.ScopeSpans[0].Spans, test.MakeSpan(traceID))
 	}
 
@@ -639,11 +640,7 @@ func makePushBytesRequest(traceID []byte, batch *v1_trace.ResourceSpans) *tempop
 	}
 
 	return &tempopb.PushBytesRequest{
-		Ids: []tempopb.PreallocBytes{{
-			Slice: traceID,
-		}},
-		Traces: []tempopb.PreallocBytes{{
-			Slice: buffer,
-		}},
+		Traces: [][]byte{buffer},
+		Ids:    [][]byte{traceID},
 	}
 }

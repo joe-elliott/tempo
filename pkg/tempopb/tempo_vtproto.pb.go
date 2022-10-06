@@ -729,10 +729,10 @@ func (m *Trace) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 	}
 	if len(m.Batches) > 0 {
 		for iNdEx := len(m.Batches) - 1; iNdEx >= 0; iNdEx-- {
-			if marshalto, ok := interface{}(m.Batches[iNdEx]).(interface {
+			if vtmsg, ok := interface{}(m.Batches[iNdEx]).(interface {
 				MarshalToSizedBufferVT([]byte) (int, error)
 			}); ok {
-				size, err := marshalto.MarshalToSizedBufferVT(dAtA[:i])
+				size, err := vtmsg.MarshalToSizedBufferVT(dAtA[:i])
 				if err != nil {
 					return 0, err
 				}
@@ -879,10 +879,10 @@ func (m *PushSpansRequest) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 	}
 	if len(m.Batches) > 0 {
 		for iNdEx := len(m.Batches) - 1; iNdEx >= 0; iNdEx-- {
-			if marshalto, ok := interface{}(m.Batches[iNdEx]).(interface {
+			if vtmsg, ok := interface{}(m.Batches[iNdEx]).(interface {
 				MarshalToSizedBufferVT([]byte) (int, error)
 			}); ok {
-				size, err := marshalto.MarshalToSizedBufferVT(dAtA[:i])
+				size, err := vtmsg.MarshalToSizedBufferVT(dAtA[:i])
 				if err != nil {
 					return 0, err
 				}
@@ -965,9 +965,10 @@ var vtprotoPool_Trace = sync.Pool{
 }
 
 func (m *Trace) ResetVT() {
-	f0 := m.Batches[:0]
+	for _, mm := range m.Batches {
+		mm.ResetVT()
+	}
 	m.Reset()
-	m.Batches = f0
 }
 func (m *Trace) ReturnToVTPool() {
 	if m != nil {
@@ -1021,9 +1022,7 @@ func (m *TraceByIDRequest) SizeVT() (n int) {
 	if l > 0 {
 		n += 1 + l + sov(uint64(l))
 	}
-	if m.unknownFields != nil {
-		n += len(m.unknownFields)
-	}
+	n += len(m.unknownFields)
 	return n
 }
 
@@ -1041,9 +1040,7 @@ func (m *TraceByIDResponse) SizeVT() (n int) {
 		l = m.Metrics.SizeVT()
 		n += 1 + l + sov(uint64(l))
 	}
-	if m.unknownFields != nil {
-		n += len(m.unknownFields)
-	}
+	n += len(m.unknownFields)
 	return n
 }
 
@@ -1056,9 +1053,7 @@ func (m *TraceByIDMetrics) SizeVT() (n int) {
 	if m.FailedBlocks != 0 {
 		n += 1 + sov(uint64(m.FailedBlocks))
 	}
-	if m.unknownFields != nil {
-		n += len(m.unknownFields)
-	}
+	n += len(m.unknownFields)
 	return n
 }
 
@@ -1095,9 +1090,7 @@ func (m *SearchRequest) SizeVT() (n int) {
 	if l > 0 {
 		n += 1 + l + sov(uint64(l))
 	}
-	if m.unknownFields != nil {
-		n += len(m.unknownFields)
-	}
+	n += len(m.unknownFields)
 	return n
 }
 
@@ -1145,9 +1138,7 @@ func (m *SearchBlockRequest) SizeVT() (n int) {
 	if m.FooterSize != 0 {
 		n += 1 + sov(uint64(m.FooterSize))
 	}
-	if m.unknownFields != nil {
-		n += len(m.unknownFields)
-	}
+	n += len(m.unknownFields)
 	return n
 }
 
@@ -1167,9 +1158,7 @@ func (m *SearchResponse) SizeVT() (n int) {
 		l = m.Metrics.SizeVT()
 		n += 1 + l + sov(uint64(l))
 	}
-	if m.unknownFields != nil {
-		n += len(m.unknownFields)
-	}
+	n += len(m.unknownFields)
 	return n
 }
 
@@ -1197,9 +1186,7 @@ func (m *TraceSearchMetadata) SizeVT() (n int) {
 	if m.DurationMs != 0 {
 		n += 1 + sov(uint64(m.DurationMs))
 	}
-	if m.unknownFields != nil {
-		n += len(m.unknownFields)
-	}
+	n += len(m.unknownFields)
 	return n
 }
 
@@ -1227,9 +1214,7 @@ func (m *SearchMetrics) SizeVT() (n int) {
 	if m.TotalBlockBytes != 0 {
 		n += 1 + sov(uint64(m.TotalBlockBytes))
 	}
-	if m.unknownFields != nil {
-		n += len(m.unknownFields)
-	}
+	n += len(m.unknownFields)
 	return n
 }
 
@@ -1239,9 +1224,7 @@ func (m *SearchTagsRequest) SizeVT() (n int) {
 	}
 	var l int
 	_ = l
-	if m.unknownFields != nil {
-		n += len(m.unknownFields)
-	}
+	n += len(m.unknownFields)
 	return n
 }
 
@@ -1257,9 +1240,7 @@ func (m *SearchTagsResponse) SizeVT() (n int) {
 			n += 1 + l + sov(uint64(l))
 		}
 	}
-	if m.unknownFields != nil {
-		n += len(m.unknownFields)
-	}
+	n += len(m.unknownFields)
 	return n
 }
 
@@ -1273,9 +1254,7 @@ func (m *SearchTagValuesRequest) SizeVT() (n int) {
 	if l > 0 {
 		n += 1 + l + sov(uint64(l))
 	}
-	if m.unknownFields != nil {
-		n += len(m.unknownFields)
-	}
+	n += len(m.unknownFields)
 	return n
 }
 
@@ -1291,9 +1270,7 @@ func (m *SearchTagValuesResponse) SizeVT() (n int) {
 			n += 1 + l + sov(uint64(l))
 		}
 	}
-	if m.unknownFields != nil {
-		n += len(m.unknownFields)
-	}
+	n += len(m.unknownFields)
 	return n
 }
 
@@ -1315,9 +1292,7 @@ func (m *Trace) SizeVT() (n int) {
 			n += 1 + l + sov(uint64(l))
 		}
 	}
-	if m.unknownFields != nil {
-		n += len(m.unknownFields)
-	}
+	n += len(m.unknownFields)
 	return n
 }
 
@@ -1327,9 +1302,7 @@ func (m *PushResponse) SizeVT() (n int) {
 	}
 	var l int
 	_ = l
-	if m.unknownFields != nil {
-		n += len(m.unknownFields)
-	}
+	n += len(m.unknownFields)
 	return n
 }
 
@@ -1357,9 +1330,7 @@ func (m *PushBytesRequest) SizeVT() (n int) {
 			n += 1 + l + sov(uint64(l))
 		}
 	}
-	if m.unknownFields != nil {
-		n += len(m.unknownFields)
-	}
+	n += len(m.unknownFields)
 	return n
 }
 
@@ -1381,9 +1352,7 @@ func (m *PushSpansRequest) SizeVT() (n int) {
 			n += 1 + l + sov(uint64(l))
 		}
 	}
-	if m.unknownFields != nil {
-		n += len(m.unknownFields)
-	}
+	n += len(m.unknownFields)
 	return n
 }
 
@@ -1399,9 +1368,7 @@ func (m *TraceBytes) SizeVT() (n int) {
 			n += 1 + l + sov(uint64(l))
 		}
 	}
-	if m.unknownFields != nil {
-		n += len(m.unknownFields)
-	}
+	n += len(m.unknownFields)
 	return n
 }
 

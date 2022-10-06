@@ -3,10 +3,10 @@ package v1
 import (
 	"fmt"
 
-	"github.com/gogo/protobuf/proto"
 	"github.com/grafana/tempo/pkg/model/decoder"
 	"github.com/grafana/tempo/pkg/model/trace"
 	"github.com/grafana/tempo/pkg/tempopb"
+	"google.golang.org/protobuf/proto" // jpe is this change backwards compatible?
 )
 
 type SegmentDecoder struct {

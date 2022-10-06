@@ -51,6 +51,8 @@ const (
 // Ingester builds blocks out of incoming traces
 type Ingester struct {
 	services.Service
+	tempopb.UnimplementedPusherServer
+	tempopb.UnimplementedQuerierServer
 
 	cfg Config
 
@@ -186,7 +188,7 @@ func (i *Ingester) PushBytes(ctx context.Context, req *tempopb.PushBytesRequest)
 	}
 
 	for i, t := range req.Traces {
-		trace, err := v1Decoder.PrepareForRead([][]byte{t.Slice})
+		trace, err := v1Decoder.PrepareForRead([][]byte{t})
 		if err != nil {
 			return nil, fmt.Errorf("error calling v1.PrepareForRead %w", err)
 		}
@@ -197,7 +199,7 @@ func (i *Ingester) PushBytes(ctx context.Context, req *tempopb.PushBytesRequest)
 			return nil, fmt.Errorf("error calling v2.PrepareForWrite %w", err)
 		}
 
-		req.Traces[i].Slice = v2Slice
+		req.Traces[i] = v2Slice
 	}
 
 	return i.PushBytesV2(ctx, req)

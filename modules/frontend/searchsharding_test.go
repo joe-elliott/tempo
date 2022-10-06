@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/go-kit/log"
-	"github.com/golang/protobuf/jsonpb" //nolint:all deprecated
+	"github.com/gogo/protobuf/jsonpb"
 	"github.com/google/uuid"
 	"github.com/grafana/tempo/modules/overrides"
 	"github.com/grafana/tempo/pkg/api"
@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/weaveworks/common/user"
+	"google.golang.org/protobuf/encoding/protojson"
 )
 
 // implements tempodb.Reader interface
@@ -517,8 +518,9 @@ func TestSearchSharderRoundTrip(t *testing.T) {
 
 				var resString string
 				if response != nil {
-					resString, err = (&jsonpb.Marshaler{}).MarshalToString(response)
+					buff, err := protojson.Marshal(response)
 					require.NoError(t, err)
+					resString = string(buff)
 				}
 
 				return &http.Response{

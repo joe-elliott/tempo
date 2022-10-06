@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/go-kit/log"
-	"github.com/gogo/protobuf/proto"
 	"github.com/grafana/dskit/flagext"
 	"github.com/grafana/dskit/kv/consul"
 	"github.com/grafana/dskit/ring"
@@ -58,7 +57,7 @@ func TestPushQueryAllEncodings(t *testing.T) {
 					TraceID: traceID,
 				})
 				require.NoError(t, err, "unexpected error querying")
-				require.Equal(t, foundTrace.Trace, traces[pos])
+				test.TraceEqual(t, foundTrace.Trace, traces[pos])
 			}
 
 			// force cut all traces
@@ -73,8 +72,7 @@ func TestPushQueryAllEncodings(t *testing.T) {
 					TraceID: traceID,
 				})
 				require.NoError(t, err, "unexpected error querying")
-				equal := proto.Equal(traces[i], foundTrace.Trace)
-				require.True(t, equal)
+				test.TraceEqual(t, traces[i], foundTrace.Trace)
 			}
 		})
 	}
@@ -107,7 +105,7 @@ func TestFullTraceReturned(t *testing.T) {
 		TraceID: traceID,
 	})
 	require.NoError(t, err, "unexpected error querying")
-	require.True(t, proto.Equal(testTrace, foundTrace.Trace))
+	test.TraceEqual(t, testTrace, foundTrace.Trace)
 
 	// force cut all traces
 	for _, instance := range ingester.instances {
@@ -120,7 +118,7 @@ func TestFullTraceReturned(t *testing.T) {
 		TraceID: traceID,
 	})
 	require.NoError(t, err, "unexpected error querying")
-	require.True(t, proto.Equal(testTrace, foundTrace.Trace))
+	test.TraceEqual(t, testTrace, foundTrace.Trace)
 }
 
 func TestWal(t *testing.T) {
@@ -134,7 +132,7 @@ func TestWal(t *testing.T) {
 			TraceID: traceID,
 		})
 		require.NoError(t, err, "unexpected error querying")
-		require.Equal(t, foundTrace.Trace, traces[pos])
+		test.TraceEqual(t, foundTrace.Trace, traces[pos])
 	}
 
 	// force cut all traces
@@ -152,8 +150,9 @@ func TestWal(t *testing.T) {
 			TraceID: traceID,
 		})
 		require.NoError(t, err, "unexpected error querying")
-		equal := proto.Equal(traces[i], foundTrace.Trace)
-		require.True(t, equal)
+		trace.SortTrace(foundTrace.Trace)
+		trace.SortTrace(traces[i])
+		test.TraceEqual(t, traces[i], foundTrace.Trace)
 	}
 
 	// a block that has been replayed should have a flush queue entry to complete it
@@ -173,8 +172,7 @@ func TestWal(t *testing.T) {
 		require.NoError(t, err, "unexpected error querying")
 
 		trace.SortTrace(foundTrace.Trace)
-		equal := proto.Equal(traces[i], foundTrace.Trace)
-		require.True(t, equal)
+		test.TraceEqual(t, traces[i], foundTrace.Trace)
 	}
 }
 
@@ -192,7 +190,7 @@ func TestSearchWAL(t *testing.T) {
 	_, err = rand.Read(id)
 	require.NoError(t, err)
 	trace := test.MakeTrace(10, id)
-	traceBytes, err := trace.Marshal()
+	traceBytes, err := trace.MarshalVT()
 	require.NoError(t, err)
 	entry := &tempofb.SearchEntryMutable{}
 	entry.TraceID = id
@@ -292,7 +290,7 @@ func TestFlush(t *testing.T) {
 			TraceID: traceID,
 		})
 		require.NoError(t, err, "unexpected error querying")
-		require.Equal(t, traces[pos], foundTrace.Trace)
+		test.TraceEqual(t, traces[pos], foundTrace.Trace)
 	}
 
 	// stopping the ingester should force cut all live traces to disk
@@ -307,8 +305,9 @@ func TestFlush(t *testing.T) {
 			TraceID: traceID,
 		})
 		require.NoError(t, err, "unexpected error querying")
-		equal := proto.Equal(traces[i], foundTrace.Trace)
-		require.True(t, equal)
+		trace.SortTrace(traces[i])
+		trace.SortTrace(foundTrace.Trace)
+		test.TraceEqual(t, traces[i], foundTrace.Trace)
 	}
 }
 
@@ -421,16 +420,8 @@ func pushBatchV2(t testing.TB, i *Ingester, batch *v1.ResourceSpans, id []byte) 
 	require.NoError(t, err)
 
 	_, err = i.PushBytesV2(ctx, &tempopb.PushBytesRequest{
-		Traces: []tempopb.PreallocBytes{
-			{
-				Slice: buffer,
-			},
-		},
-		Ids: []tempopb.PreallocBytes{
-			{
-				Slice: id,
-			},
-		},
+		Traces: [][]byte{buffer},
+		Ids:    [][]byte{id},
 	})
 	require.NoError(t, err)
 }
@@ -448,16 +439,8 @@ func pushBatchV1(t testing.TB, i *Ingester, batch *v1.ResourceSpans, id []byte) 
 	require.NoError(t, err)
 
 	_, err = i.PushBytes(ctx, &tempopb.PushBytesRequest{
-		Traces: []tempopb.PreallocBytes{
-			{
-				Slice: buffer,
-			},
-		},
-		Ids: []tempopb.PreallocBytes{
-			{
-				Slice: id,
-			},
-		},
+		Traces: [][]byte{buffer},
+		Ids:    [][]byte{id},
 	})
 	require.NoError(t, err)
 }

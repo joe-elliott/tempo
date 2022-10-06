@@ -8,6 +8,7 @@
 
 package gogocodec
 
+// jpe remove ?
 import (
 	"reflect"
 	"strings"
@@ -74,5 +75,5 @@ func useGogo(t reflect.Type) bool {
 		return false
 	}
 	pkgPath := t.PkgPath()
-	return strings.HasPrefix(pkgPath, frontendProtoGenPkgPath) || strings.HasPrefix(pkgPath, tempoProtoGenPkgPath) || strings.HasPrefix(pkgPath, jaegerProtoGenPkgPath) || strings.HasPrefix(pkgPath, jaegerModelPkgPath) || strings.HasPrefix(pkgPath, otelProtoPkgPath) || strings.HasPrefix(pkgPath, etcdAPIProtoPkgPath)
+	return strings.HasPrefix(pkgPath, frontendProtoGenPkgPath) /*|| strings.HasPrefix(pkgPath, tempoProtoGenPkgPath)*/ || strings.HasPrefix(pkgPath, jaegerProtoGenPkgPath) || strings.HasPrefix(pkgPath, jaegerModelPkgPath) || strings.HasPrefix(pkgPath, otelProtoPkgPath) || strings.HasPrefix(pkgPath, etcdAPIProtoPkgPath)
 }

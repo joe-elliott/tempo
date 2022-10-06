@@ -3,10 +3,10 @@ package v1
 import (
 	"fmt"
 
-	"github.com/gogo/protobuf/proto"
 	"github.com/grafana/tempo/pkg/model/decoder"
 	"github.com/grafana/tempo/pkg/model/trace"
 	"github.com/grafana/tempo/pkg/tempopb"
+	"google.golang.org/protobuf/proto"
 )
 
 const Encoding = "v1"
@@ -23,6 +23,7 @@ func NewObjectDecoder() *ObjectDecoder {
 func (d *ObjectDecoder) PrepareForRead(obj []byte) (*tempopb.Trace, error) {
 	trace := &tempopb.Trace{}
 	traceBytes := &tempopb.TraceBytes{}
+	// err := traceBytes.UnmarshalVT(obj) // jpe more v1 changes? if these are legit grab from pool?
 	err := proto.Unmarshal(obj, traceBytes)
 	if err != nil {
 		return nil, err
@@ -31,6 +32,7 @@ func (d *ObjectDecoder) PrepareForRead(obj []byte) (*tempopb.Trace, error) {
 	for _, bytes := range traceBytes.Traces {
 		innerTrace := &tempopb.Trace{}
 		err = proto.Unmarshal(bytes, innerTrace)
+		//err = innerTrace.UnmarshalVT(bytes)
 		if err != nil {
 			return nil, err
 		}

@@ -3,9 +3,9 @@ package v2
 import (
 	"errors"
 	"fmt"
+	"io"
 	"math"
 
-	"github.com/gogo/protobuf/proto"
 	"github.com/grafana/tempo/pkg/model/trace"
 	"github.com/grafana/tempo/pkg/tempopb"
 )
@@ -36,8 +36,9 @@ func (d *SegmentDecoder) PrepareForRead(segments [][]byte) (*tempopb.Trace, erro
 			return nil, fmt.Errorf("error stripping start/end: %w", err)
 		}
 
-		t := &tempopb.Trace{}
-		err = proto.Unmarshal(obj, t)
+		// jpe ownership is weird here. who puts back?
+		t := tempopb.TraceFromVTPool()
+		err = t.UnmarshalVT(obj)
 		if err != nil {
 			return nil, fmt.Errorf("error unmarshaling trace: %w", err)
 		}
@@ -83,40 +84,68 @@ func (d *SegmentDecoder) FastRange(buff []byte) (uint32, uint32, error) {
 	return start, end, err
 }
 
-func marshalWithStartEnd(pb proto.Message, start uint32, end uint32) ([]byte, error) {
-	const uint32Size = 4
+type vtProto interface {
+	SizeVT() int
+	MarshalToSizedBufferVT(dAtA []byte) (int, error)
+}
 
-	sz := proto.Size(pb)
-	buff := make([]byte, 0, sz+uint32Size*2) // proto buff size + start/end uint32s
+const uint32Size = 4
 
-	buffer := proto.NewBuffer(buff)
+func marshalWithStartEnd(obj vtProto, start uint32, end uint32) ([]byte, error) {
+	sz := obj.SizeVT()
+	buff := make([]byte, sz+uint32Size*2) // proto buff size + start/end uint32s
 
-	_ = buffer.EncodeFixed32(uint64(start)) // EncodeFixed32 can't return an error
-	_ = buffer.EncodeFixed32(uint64(end))
-	err := buffer.Marshal(pb)
+	// jpe is this ok? - get rid of all gogo?
+	slidingBuff := buff
+	encodeUint32(start, slidingBuff)
+	slidingBuff = slidingBuff[uint32Size:]
+	encodeUint32(end, slidingBuff)
+	slidingBuff = slidingBuff[uint32Size:]
+
+	_, err := obj.MarshalToSizedBufferVT(slidingBuff)
 	if err != nil {
 		return nil, err
 	}
-
-	buff = buffer.Bytes()
 
 	return buff, nil
 }
 
 func stripStartEnd(buff []byte) ([]byte, uint32, uint32, error) {
-	if len(buff) < 8 {
+	if len(buff) < uint32Size*2 {
 		return nil, 0, 0, errors.New("buffer too short to have start/end")
 	}
 
-	buffer := proto.NewBuffer(buff)
-	start, err := buffer.DecodeFixed32()
+	start, err := decodeUint32(buff)
 	if err != nil {
 		return nil, 0, 0, fmt.Errorf("failed to read start from buffer %w", err)
 	}
-	end, err := buffer.DecodeFixed32()
+	buff = buff[uint32Size:]
+
+	end, err := decodeUint32(buff)
 	if err != nil {
 		return nil, 0, 0, fmt.Errorf("failed to read end from buffer %w", err)
 	}
+	buff = buff[uint32Size:]
 
-	return buff[8:], uint32(start), uint32(end), nil
+	return buff, start, end, nil
+}
+
+// jpe use buffer functions? previously uint64. should i follow suit?
+func encodeUint32(x uint32, buf []byte) {
+	buf[0] = uint8(x)
+	buf[1] = uint8(x >> 8)
+	buf[2] = uint8(x >> 16)
+	buf[3] = uint8(x >> 24)
+}
+
+func decodeUint32(buf []byte) (x uint32, err error) {
+	if len(buf) < uint32Size {
+		return 0, io.ErrUnexpectedEOF
+	}
+
+	x = uint32(buf[0])
+	x |= uint32(buf[1]) << 8
+	x |= uint32(buf[2]) << 16
+	x |= uint32(buf[3]) << 24
+	return
 }

@@ -88,7 +88,7 @@ func Handler(r *http.Request) (*tempopb.SearchResponse, *HTTPError) {
 		TotalRecords:  searchReq.TotalRecords,
 		BlockID:       blockID,
 		DataEncoding:  searchReq.DataEncoding,
-		Size:          searchReq.Size_,
+		Size:          searchReq.Size,
 		FooterSize:    searchReq.FooterSize,
 	}
 

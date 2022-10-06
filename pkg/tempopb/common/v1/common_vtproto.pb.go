@@ -11,6 +11,7 @@ import (
 	io "io"
 	math "math"
 	bits "math/bits"
+	sync "sync"
 )
 
 const (
@@ -51,16 +52,13 @@ func (m *AnyValue) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		copy(dAtA[i:], m.unknownFields)
 	}
 	if vtmsg, ok := m.Value.(interface {
-		MarshalToVT([]byte) (int, error)
-		SizeVT() int
+		MarshalToSizedBufferVT([]byte) (int, error)
 	}); ok {
-		{
-			size := vtmsg.SizeVT()
-			i -= size
-			if _, err := vtmsg.MarshalToVT(dAtA[i:]); err != nil {
-				return 0, err
-			}
+		size, err := vtmsg.MarshalToSizedBufferVT(dAtA[:i])
+		if err != nil {
+			return 0, err
 		}
+		i -= size
 	}
 	return len(dAtA) - i, nil
 }
@@ -418,6 +416,131 @@ func encodeVarint(dAtA []byte, offset int, v uint64) int {
 	dAtA[offset] = uint8(v)
 	return base
 }
+
+var vtprotoPool_AnyValue = sync.Pool{
+	New: func() interface{} {
+		return &AnyValue{}
+	},
+}
+
+func (m *AnyValue) ResetVT() {
+	// m.ArrayValue.ReturnToVTPool() jpe - this needs to be fixed?
+	// m.KvlistValue.ReturnToVTPool()
+	// f0 := m.BytesValue[:0]
+	m.Reset()
+//	m.BytesValue = f0
+}
+func (m *AnyValue) ReturnToVTPool() {
+	if m != nil {
+		m.ResetVT()
+		vtprotoPool_AnyValue.Put(m)
+	}
+}
+func AnyValueFromVTPool() *AnyValue {
+	return vtprotoPool_AnyValue.Get().(*AnyValue)
+}
+
+var vtprotoPool_ArrayValue = sync.Pool{
+	New: func() interface{} {
+		return &ArrayValue{}
+	},
+}
+
+func (m *ArrayValue) ResetVT() {
+	for _, mm := range m.Values {
+		mm.ResetVT()
+	}
+	m.Reset()
+}
+func (m *ArrayValue) ReturnToVTPool() {
+	if m != nil {
+		m.ResetVT()
+		vtprotoPool_ArrayValue.Put(m)
+	}
+}
+func ArrayValueFromVTPool() *ArrayValue {
+	return vtprotoPool_ArrayValue.Get().(*ArrayValue)
+}
+
+var vtprotoPool_KeyValueList = sync.Pool{
+	New: func() interface{} {
+		return &KeyValueList{}
+	},
+}
+
+func (m *KeyValueList) ResetVT() {
+	for _, mm := range m.Values {
+		mm.ResetVT()
+	}
+	m.Reset()
+}
+func (m *KeyValueList) ReturnToVTPool() {
+	if m != nil {
+		m.ResetVT()
+		vtprotoPool_KeyValueList.Put(m)
+	}
+}
+func KeyValueListFromVTPool() *KeyValueList {
+	return vtprotoPool_KeyValueList.Get().(*KeyValueList)
+}
+
+var vtprotoPool_KeyValue = sync.Pool{
+	New: func() interface{} {
+		return &KeyValue{}
+	},
+}
+
+func (m *KeyValue) ResetVT() {
+	m.Value.ReturnToVTPool()
+	m.Reset()
+}
+func (m *KeyValue) ReturnToVTPool() {
+	if m != nil {
+		m.ResetVT()
+		vtprotoPool_KeyValue.Put(m)
+	}
+}
+func KeyValueFromVTPool() *KeyValue {
+	return vtprotoPool_KeyValue.Get().(*KeyValue)
+}
+
+var vtprotoPool_InstrumentationLibrary = sync.Pool{
+	New: func() interface{} {
+		return &InstrumentationLibrary{}
+	},
+}
+
+func (m *InstrumentationLibrary) ResetVT() {
+	m.Reset()
+}
+func (m *InstrumentationLibrary) ReturnToVTPool() {
+	if m != nil {
+		m.ResetVT()
+		vtprotoPool_InstrumentationLibrary.Put(m)
+	}
+}
+func InstrumentationLibraryFromVTPool() *InstrumentationLibrary {
+	return vtprotoPool_InstrumentationLibrary.Get().(*InstrumentationLibrary)
+}
+
+var vtprotoPool_InstrumentationScope = sync.Pool{
+	New: func() interface{} {
+		return &InstrumentationScope{}
+	},
+}
+
+func (m *InstrumentationScope) ResetVT() {
+	m.Reset()
+}
+func (m *InstrumentationScope) ReturnToVTPool() {
+	if m != nil {
+		m.ResetVT()
+		vtprotoPool_InstrumentationScope.Put(m)
+	}
+}
+func InstrumentationScopeFromVTPool() *InstrumentationScope {
+	return vtprotoPool_InstrumentationScope.Get().(*InstrumentationScope)
+}
 func (m *AnyValue) SizeVT() (n int) {
 	if m == nil {
 		return 0
@@ -427,9 +550,7 @@ func (m *AnyValue) SizeVT() (n int) {
 	if vtmsg, ok := m.Value.(interface{ SizeVT() int }); ok {
 		n += vtmsg.SizeVT()
 	}
-	if m.unknownFields != nil {
-		n += len(m.unknownFields)
-	}
+	n += len(m.unknownFields)
 	return n
 }
 
@@ -516,9 +637,7 @@ func (m *ArrayValue) SizeVT() (n int) {
 			n += 1 + l + sov(uint64(l))
 		}
 	}
-	if m.unknownFields != nil {
-		n += len(m.unknownFields)
-	}
+	n += len(m.unknownFields)
 	return n
 }
 
@@ -534,9 +653,7 @@ func (m *KeyValueList) SizeVT() (n int) {
 			n += 1 + l + sov(uint64(l))
 		}
 	}
-	if m.unknownFields != nil {
-		n += len(m.unknownFields)
-	}
+	n += len(m.unknownFields)
 	return n
 }
 
@@ -554,9 +671,7 @@ func (m *KeyValue) SizeVT() (n int) {
 		l = m.Value.SizeVT()
 		n += 1 + l + sov(uint64(l))
 	}
-	if m.unknownFields != nil {
-		n += len(m.unknownFields)
-	}
+	n += len(m.unknownFields)
 	return n
 }
 
@@ -574,9 +689,7 @@ func (m *InstrumentationLibrary) SizeVT() (n int) {
 	if l > 0 {
 		n += 1 + l + sov(uint64(l))
 	}
-	if m.unknownFields != nil {
-		n += len(m.unknownFields)
-	}
+	n += len(m.unknownFields)
 	return n
 }
 
@@ -594,9 +707,7 @@ func (m *InstrumentationScope) SizeVT() (n int) {
 	if l > 0 {
 		n += 1 + l + sov(uint64(l))
 	}
-	if m.unknownFields != nil {
-		n += len(m.unknownFields)
-	}
+	n += len(m.unknownFields)
 	return n
 }
 
@@ -665,7 +776,7 @@ func (m *AnyValue) UnmarshalVT(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Value = &AnyValue_StringValue{string(dAtA[iNdEx:postIndex])}
+			m.Value = &AnyValue_StringValue{StringValue: string(dAtA[iNdEx:postIndex])}
 			iNdEx = postIndex
 		case 2:
 			if wireType != 0 {
@@ -687,7 +798,7 @@ func (m *AnyValue) UnmarshalVT(dAtA []byte) error {
 				}
 			}
 			b := bool(v != 0)
-			m.Value = &AnyValue_BoolValue{b}
+			m.Value = &AnyValue_BoolValue{BoolValue: b}
 		case 3:
 			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field IntValue", wireType)
@@ -707,7 +818,7 @@ func (m *AnyValue) UnmarshalVT(dAtA []byte) error {
 					break
 				}
 			}
-			m.Value = &AnyValue_IntValue{v}
+			m.Value = &AnyValue_IntValue{IntValue: v}
 		case 4:
 			if wireType != 1 {
 				return fmt.Errorf("proto: wrong wireType = %d for field DoubleValue", wireType)
@@ -718,7 +829,7 @@ func (m *AnyValue) UnmarshalVT(dAtA []byte) error {
 			}
 			v = uint64(binary.LittleEndian.Uint64(dAtA[iNdEx:]))
 			iNdEx += 8
-			m.Value = &AnyValue_DoubleValue{float64(math.Float64frombits(v))}
+			m.Value = &AnyValue_DoubleValue{DoubleValue: float64(math.Float64frombits(v))}
 		case 5:
 			if wireType != 2 {
 				return fmt.Errorf("proto: wrong wireType = %d for field ArrayValue", wireType)
@@ -757,7 +868,7 @@ func (m *AnyValue) UnmarshalVT(dAtA []byte) error {
 				if err := v.UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
 					return err
 				}
-				m.Value = &AnyValue_ArrayValue{v}
+				m.Value = &AnyValue_ArrayValue{ArrayValue: v}
 			}
 			iNdEx = postIndex
 		case 6:
@@ -798,7 +909,7 @@ func (m *AnyValue) UnmarshalVT(dAtA []byte) error {
 				if err := v.UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
 					return err
 				}
-				m.Value = &AnyValue_KvlistValue{v}
+				m.Value = &AnyValue_KvlistValue{KvlistValue: v}
 			}
 			iNdEx = postIndex
 		case 7:
@@ -832,7 +943,7 @@ func (m *AnyValue) UnmarshalVT(dAtA []byte) error {
 			}
 			v := make([]byte, postIndex-iNdEx)
 			copy(v, dAtA[iNdEx:postIndex])
-			m.Value = &AnyValue_BytesValue{v}
+			m.Value = &AnyValue_BytesValue{BytesValue: v}
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -914,7 +1025,14 @@ func (m *ArrayValue) UnmarshalVT(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Values = append(m.Values, &AnyValue{})
+			if len(m.Values) == cap(m.Values) {
+				m.Values = append(m.Values, &AnyValue{})
+			} else {
+				m.Values = m.Values[:len(m.Values)+1]
+				if m.Values[len(m.Values)-1] == nil {
+					m.Values[len(m.Values)-1] = &AnyValue{}
+				}
+			}
 			if err := m.Values[len(m.Values)-1].UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
@@ -999,7 +1117,14 @@ func (m *KeyValueList) UnmarshalVT(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Values = append(m.Values, &KeyValue{})
+			if len(m.Values) == cap(m.Values) {
+				m.Values = append(m.Values, &KeyValue{})
+			} else {
+				m.Values = m.Values[:len(m.Values)+1]
+				if m.Values[len(m.Values)-1] == nil {
+					m.Values[len(m.Values)-1] = &KeyValue{}
+				}
+			}
 			if err := m.Values[len(m.Values)-1].UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
@@ -1117,7 +1242,7 @@ func (m *KeyValue) UnmarshalVT(dAtA []byte) error {
 				return io.ErrUnexpectedEOF
 			}
 			if m.Value == nil {
-				m.Value = &AnyValue{}
+				m.Value = AnyValueFromVTPool()
 			}
 			if err := m.Value.UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
 				return err

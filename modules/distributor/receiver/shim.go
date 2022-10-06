@@ -276,8 +276,8 @@ func (r *receiversShim) ConsumeTraces(ctx context.Context, td ptrace.Traces) err
 
 	// tempopb.Trace is wire-compatible with ExportTraceServiceRequest
 	// used by ToOtlpProtoBytes
-	trace := tempopb.Trace{}
-	err = trace.Unmarshal(convert)
+	trace := tempopb.TraceFromVTPool()
+	err = trace.UnmarshalVT(convert)
 	if err != nil {
 		return err
 	}
@@ -288,6 +288,7 @@ func (r *receiversShim) ConsumeTraces(ctx context.Context, td ptrace.Traces) err
 	if err != nil {
 		r.logger.Log("msg", "pusher failed to consume trace data", "err", err)
 	}
+	trace.ReturnToVTPool()
 
 	return err
 }

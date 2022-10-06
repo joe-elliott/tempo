@@ -1,16 +1,15 @@
 package main
 
 import (
-	"bytes"
-	"fmt"
+	"io"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/go-test/deep"
-	"github.com/gogo/protobuf/jsonpb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/grafana/tempo/pkg/tempopb"
 	v1 "github.com/grafana/tempo/pkg/tempopb/trace/v1"
@@ -74,7 +73,9 @@ func TestResponseFixture(t *testing.T) {
 	defer f.Close()
 
 	expected := &tempopb.Trace{}
-	err = jsonpb.Unmarshal(f, expected)
+	buff, err := io.ReadAll(f)
+	require.NoError(t, err)
+	err = protojson.Unmarshal(buff, expected)
 	require.NoError(t, err)
 
 	seed := time.Unix(1636729665, 0)
@@ -84,11 +85,8 @@ func TestResponseFixture(t *testing.T) {
 	require.NoError(t, err)
 
 	// print the generated trace
-	var jsonTrace bytes.Buffer
-	marshaller := &jsonpb.Marshaler{}
-	err = marshaller.Marshal(&jsonTrace, generatedTrace)
+	buff, err = protojson.Marshal(generatedTrace)
 	require.NoError(t, err)
-	fmt.Println(jsonTrace.String())
 
 	assert.True(t, equalTraces(expected, generatedTrace))
 

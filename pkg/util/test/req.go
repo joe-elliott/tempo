@@ -1,14 +1,17 @@
 package test
 
 import (
+	"encoding/json"
 	"math/rand"
+	"testing"
 	"time"
 
-	"github.com/gogo/protobuf/proto"
 	"github.com/grafana/tempo/pkg/tempopb"
 	v1_common "github.com/grafana/tempo/pkg/tempopb/common/v1"
 	v1_resource "github.com/grafana/tempo/pkg/tempopb/resource/v1"
 	v1_trace "github.com/grafana/tempo/pkg/tempopb/trace/v1"
+	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 )
 
 func MakeSpan(traceID []byte) *v1_trace.Span {
@@ -133,4 +136,13 @@ func RandomString() string {
 		s[i] = letters[rand.Intn(len(letters))]
 	}
 	return string(s)
+}
+
+func TraceEqual(t *testing.T, t1 *tempopb.Trace, t2 *tempopb.Trace) {
+	if !proto.Equal(t1, t2) {
+		wantJSON, _ := json.MarshalIndent(t1, "", "  ")
+		gotJSON, _ := json.MarshalIndent(t2, "", "  ")
+
+		require.Equal(t, string(wantJSON), string(gotJSON))
+	}
 }

@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gogo/protobuf/proto"
 	"github.com/grafana/tempo/pkg/model/decoder"
 	"github.com/grafana/tempo/pkg/model/trace"
 	"github.com/grafana/tempo/pkg/tempopb"
@@ -15,6 +14,7 @@ import (
 	"github.com/grafana/tempo/pkg/util/test"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestObjectDecoderMarshalUnmarshal(t *testing.T) {
@@ -597,15 +597,19 @@ func TestCombines(t *testing.T) {
 				if tt.expected != nil {
 					actual, err := d.PrepareForRead(actualBytes)
 					require.NoError(t, err)
-					assert.Equal(t, tt.expected, actual)
+
+					if !proto.Equal(tt.expected, actual) { // jpe sometimes fails?
+						require.Equal(t, tt.expected, actual)
+					}
+					require.True(t, proto.Equal(tt.expected, actual))
 
 					start, end, err := d.FastRange(actualBytes)
 					if err == decoder.ErrUnsupported {
 						return
 					}
 					require.NoError(t, err)
-					assert.Equal(t, tt.expectedStart, start)
-					assert.Equal(t, tt.expectedEnd, end)
+					require.Equal(t, tt.expectedStart, start)
+					require.Equal(t, tt.expectedEnd, end)
 				}
 			})
 		}

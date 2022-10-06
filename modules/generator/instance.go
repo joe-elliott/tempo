@@ -270,7 +270,7 @@ func (i *instance) preprocessSpans(req *tempopb.PushSpansRequest) {
 	spanCount := 0
 	expiredSpanCount := 0
 	for _, b := range req.Batches {
-		size += b.Size()
+		size += b.SizeVT()
 		for _, ss := range b.ScopeSpans {
 			spanCount += len(ss.Spans)
 			// filter spans that have end time > max_age and end time more than 5 days in the future

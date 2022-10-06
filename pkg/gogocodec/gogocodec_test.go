@@ -5,12 +5,12 @@ package gogocodec
 import (
 	"testing"
 
-	"github.com/golang/protobuf/proto" //nolint:all,deprecated SA1019 deprecated package
+	//nolint:all,deprecated SA1019 deprecated package
+	"github.com/grafana/tempo/pkg/tempopb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
-
-	"github.com/grafana/tempo/pkg/tempopb"
 )
 
 func TestCodecMarshallAndUnmarshall_tempo_type(t *testing.T) {
@@ -26,7 +26,7 @@ func TestCodecMarshallAndUnmarshall_tempo_type(t *testing.T) {
 	req2 := &tempopb.TraceByIDRequest{}
 	err = c.Unmarshal(data, req2)
 	require.NoError(t, err)
-	assert.Equal(t, req1, req2)
+	require.True(t, proto.Equal(req1, req2))
 }
 
 func TestCodecMarshallAndUnmarshall_foreign_type(t *testing.T) {
@@ -64,5 +64,5 @@ func TestWireCompatibility(t *testing.T) {
 	req2 := &tempopb.TraceByIDRequest{}
 	err = c.Unmarshal(data2, req2)
 	require.NoError(t, err)
-	assert.Equal(t, req1, req2)
+	require.True(t, proto.Equal(req1, req2))
 }

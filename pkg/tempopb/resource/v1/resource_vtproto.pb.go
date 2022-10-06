@@ -11,6 +11,7 @@ import (
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	io "io"
 	bits "math/bits"
+	sync "sync"
 )
 
 const (
@@ -57,10 +58,10 @@ func (m *Resource) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 	}
 	if len(m.Attributes) > 0 {
 		for iNdEx := len(m.Attributes) - 1; iNdEx >= 0; iNdEx-- {
-			if marshalto, ok := interface{}(m.Attributes[iNdEx]).(interface {
+			if vtmsg, ok := interface{}(m.Attributes[iNdEx]).(interface {
 				MarshalToSizedBufferVT([]byte) (int, error)
 			}); ok {
-				size, err := marshalto.MarshalToSizedBufferVT(dAtA[:i])
+				size, err := vtmsg.MarshalToSizedBufferVT(dAtA[:i])
 				if err != nil {
 					return 0, err
 				}
@@ -93,6 +94,28 @@ func encodeVarint(dAtA []byte, offset int, v uint64) int {
 	dAtA[offset] = uint8(v)
 	return base
 }
+
+var vtprotoPool_Resource = sync.Pool{
+	New: func() interface{} {
+		return &Resource{}
+	},
+}
+
+func (m *Resource) ResetVT() {
+	for _, mm := range m.Attributes {
+		mm.ResetVT()
+	}
+	m.Reset()
+}
+func (m *Resource) ReturnToVTPool() {
+	if m != nil {
+		m.ResetVT()
+		vtprotoPool_Resource.Put(m)
+	}
+}
+func ResourceFromVTPool() *Resource {
+	return vtprotoPool_Resource.Get().(*Resource)
+}
 func (m *Resource) SizeVT() (n int) {
 	if m == nil {
 		return 0
@@ -114,9 +137,7 @@ func (m *Resource) SizeVT() (n int) {
 	if m.DroppedAttributesCount != 0 {
 		n += 1 + sov(uint64(m.DroppedAttributesCount))
 	}
-	if m.unknownFields != nil {
-		n += len(m.unknownFields)
-	}
+	n += len(m.unknownFields)
 	return n
 }
 
@@ -184,7 +205,14 @@ func (m *Resource) UnmarshalVT(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Attributes = append(m.Attributes, &v1.KeyValue{})
+			if len(m.Attributes) == cap(m.Attributes) {
+				m.Attributes = append(m.Attributes, &v1.KeyValue{})
+			} else {
+				m.Attributes = m.Attributes[:len(m.Attributes)+1]
+				if m.Attributes[len(m.Attributes)-1] == nil {
+					m.Attributes[len(m.Attributes)-1] = &v1.KeyValue{}
+				}
+			}
 			if unmarshal, ok := interface{}(m.Attributes[len(m.Attributes)-1]).(interface {
 				UnmarshalVT([]byte) error
 			}); ok {

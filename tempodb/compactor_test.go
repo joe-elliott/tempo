@@ -3,14 +3,12 @@ package tempodb
 import (
 	"context"
 	"encoding/binary"
-	"encoding/json"
 	"math/rand"
 	"path"
 	"testing"
 	"time"
 
 	"github.com/go-kit/log"
-	proto "github.com/gogo/protobuf/proto"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -194,12 +192,7 @@ func testCompactionRoundtrip(t *testing.T, targetBlockVersion string) {
 		// Sort all traces to check equality consistently.
 		trace.SortTrace(allReqs[i])
 		trace.SortTrace(tr)
-
-		if !proto.Equal(allReqs[i], tr) {
-			wantJSON, _ := json.MarshalIndent(allReqs[i], "", "  ")
-			gotJSON, _ := json.MarshalIndent(tr, "", "  ")
-			require.Equal(t, wantJSON, gotJSON)
-		}
+		test.TraceEqual(t, allReqs[i], tr)
 	}
 }
 

@@ -165,11 +165,11 @@ func (i *instance) PushBytesRequest(ctx context.Context, req *tempopb.PushBytesR
 	for j := range req.Traces {
 		// Search data is optional.
 		var searchData []byte
-		if len(req.SearchData) > j && len(req.SearchData[j].Slice) > 0 {
-			searchData = req.SearchData[j].Slice
+		if len(req.SearchData) > j && len(req.SearchData[j]) > 0 {
+			searchData = req.SearchData[j]
 		}
 
-		err := i.PushBytes(ctx, req.Ids[j].Slice, req.Traces[j].Slice, searchData)
+		err := i.PushBytes(ctx, req.Ids[j], req.Traces[j], searchData)
 		if err != nil {
 			return err
 		}
@@ -252,10 +252,6 @@ func (i *instance) CutCompleteTraces(cutoff time.Duration, immediate bool) error
 		if err != nil {
 			return err
 		}
-
-		// return trace byte slices to be reused by proto marshalling
-		//  WARNING: can't reuse traceid's b/c the appender takes ownership of byte slices that are passed to it
-		tempopb.ReuseByteSlices(t.batches)
 	}
 
 	return nil

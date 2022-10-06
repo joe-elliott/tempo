@@ -296,7 +296,7 @@ func (d *Distributor) PushBatches(ctx context.Context, batches []*v1.ResourceSpa
 	size := 0
 	spanCount := 0
 	for _, b := range batches {
-		size += b.Size()
+		size += b.SizeVT() // jpe hopefully this is the same?
 		for _, ils := range b.ScopeSpans {
 			spanCount += len(ils.Spans)
 		}
@@ -376,18 +376,18 @@ func (d *Distributor) sendToIngestersViaBytes(ctx context.Context, userID string
 		localCtx = user.InjectOrgID(localCtx, userID)
 
 		req := tempopb.PushBytesRequest{
-			Traces:     make([]tempopb.PreallocBytes, len(indexes)),
-			Ids:        make([]tempopb.PreallocBytes, len(indexes)),
-			SearchData: make([]tempopb.PreallocBytes, len(indexes)),
+			Traces:     make([][]byte, len(indexes)),
+			Ids:        make([][]byte, len(indexes)),
+			SearchData: make([][]byte, len(indexes)),
 		}
 
 		for i, j := range indexes {
-			req.Traces[i].Slice = marshalledTraces[j][0:]
-			req.Ids[i].Slice = traces[j].id
+			req.Traces[i] = marshalledTraces[j][0:]
+			req.Ids[i] = traces[j].id
 
 			// Search data optional
 			if len(searchData) > j {
-				req.SearchData[i].Slice = searchData[j]
+				req.SearchData[i] = searchData[j]
 			}
 		}
 

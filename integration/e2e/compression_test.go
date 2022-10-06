@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gogo/protobuf/jsonpb"
+	"github.com/gogo/protobuf/jsonpb" // jpe find and remove all gogos?
 	"github.com/stretchr/testify/require"
 
 	"github.com/grafana/e2e"

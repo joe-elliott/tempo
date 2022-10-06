@@ -124,7 +124,7 @@ func TestReceivers(t *testing.T) {
 			_, err = rand.Read(traceID)
 			require.NoError(t, err)
 			req := test.MakeTrace(20, traceID)
-			b, err := req.Marshal()
+			b, err := req.MarshalVT()
 			require.NoError(t, err)
 
 			// unmarshal into otlp proto

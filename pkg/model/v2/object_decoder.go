@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/gogo/protobuf/proto"
 	"github.com/grafana/tempo/pkg/model/trace"
 	"github.com/grafana/tempo/pkg/tempopb"
 )
@@ -35,9 +34,9 @@ func (d *ObjectDecoder) PrepareForRead(obj []byte) (*tempopb.Trace, error) {
 		return nil, err
 	}
 
-	trace := &tempopb.Trace{}
+	trace := tempopb.TraceFromVTPool()
 	traceBytes := tempopb.TraceBytesFromVTPool()
-	err = proto.Unmarshal(obj, traceBytes)
+	err = traceBytes.UnmarshalVT(obj)
 	if err != nil {
 		return nil, err
 	}
@@ -50,7 +49,9 @@ func (d *ObjectDecoder) PrepareForRead(obj []byte) (*tempopb.Trace, error) {
 		}
 
 		trace.Batches = append(trace.Batches, innerTrace.Batches...)
+		// innerTrace.ReturnToVTPool()
 	}
+	traceBytes.ReturnToVTPool()
 	return trace, nil
 }
 
@@ -124,7 +125,8 @@ func (d *ObjectDecoder) Combine(objs ...[]byte) ([]byte, error) {
 	combinedTrace, _ := c.Result()
 
 	traceBytes := &tempopb.TraceBytes{}
-	bytes, err := proto.Marshal(combinedTrace)
+	// jpe i'm going to have to make a v3 :(?
+	bytes, err := combinedTrace.MarshalVT()
 	if err != nil {
 		return nil, fmt.Errorf("error marshaling traceBytes: %w", err)
 	}
