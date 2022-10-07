@@ -965,10 +965,12 @@ var vtprotoPool_Trace = sync.Pool{
 }
 
 func (m *Trace) ResetVT() {
+	f0 := m.Batches[:0]
 	for _, mm := range m.Batches {
 		mm.ResetVT()
 	}
 	m.Reset()
+	m.Batches = f0
 }
 func (m *Trace) ReturnToVTPool() {
 	if m != nil {

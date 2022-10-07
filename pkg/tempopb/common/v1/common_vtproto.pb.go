@@ -424,11 +424,11 @@ var vtprotoPool_AnyValue = sync.Pool{
 }
 
 func (m *AnyValue) ResetVT() {
-	// m.ArrayValue.ReturnToVTPool() jpe - this needs to be fixed?
-	// m.KvlistValue.ReturnToVTPool()
-	// f0 := m.BytesValue[:0]
+	//m.ArrayValue.ReturnToVTPool()
+	//m.KvlistValue.ReturnToVTPool()
+	//f0 := m.BytesValue[:0]
 	m.Reset()
-//	m.BytesValue = f0
+	//m.BytesValue = f0
 }
 func (m *AnyValue) ReturnToVTPool() {
 	if m != nil {

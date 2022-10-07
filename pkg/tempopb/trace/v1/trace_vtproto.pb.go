@@ -684,10 +684,12 @@ var vtprotoPool_TracesData = sync.Pool{
 }
 
 func (m *TracesData) ResetVT() {
+	f0 := m.ResourceSpans[:0]
 	for _, mm := range m.ResourceSpans {
 		mm.ResetVT()
 	}
 	m.Reset()
+	m.ResourceSpans = f0
 }
 func (m *TracesData) ReturnToVTPool() {
 	if m != nil {
@@ -706,6 +708,8 @@ var vtprotoPool_ResourceSpans = sync.Pool{
 }
 
 func (m *ResourceSpans) ResetVT() {
+	f0 := m.InstrumentationLibrarySpans[:0]
+	f1 := m.ScopeSpans[:0]
 	m.Resource.ReturnToVTPool()
 	for _, mm := range m.ScopeSpans {
 		mm.ResetVT()
@@ -714,6 +718,8 @@ func (m *ResourceSpans) ResetVT() {
 		mm.ResetVT()
 	}
 	m.Reset()
+	m.InstrumentationLibrarySpans = f0
+	m.ScopeSpans = f1
 }
 func (m *ResourceSpans) ReturnToVTPool() {
 	if m != nil {
@@ -732,11 +738,13 @@ var vtprotoPool_ScopeSpans = sync.Pool{
 }
 
 func (m *ScopeSpans) ResetVT() {
+	f0 := m.Spans[:0]
 	m.Scope.ReturnToVTPool()
 	for _, mm := range m.Spans {
 		mm.ResetVT()
 	}
 	m.Reset()
+	m.Spans = f0
 }
 func (m *ScopeSpans) ReturnToVTPool() {
 	if m != nil {
@@ -755,11 +763,13 @@ var vtprotoPool_InstrumentationLibrarySpans = sync.Pool{
 }
 
 func (m *InstrumentationLibrarySpans) ResetVT() {
+	f0 := m.Spans[:0]
 	m.InstrumentationLibrary.ReturnToVTPool()
 	for _, mm := range m.Spans {
 		mm.ResetVT()
 	}
 	m.Reset()
+	m.Spans = f0
 }
 func (m *InstrumentationLibrarySpans) ReturnToVTPool() {
 	if m != nil {
@@ -778,8 +788,9 @@ var vtprotoPool_Span = sync.Pool{
 }
 
 func (m *Span) ResetVT() {
+	f3 := m.Attributes[:0]
 	f0 := m.TraceId[:0]
-	f1 := m.SpanId[:0]
+	//f1 := m.SpanId[:0]
 	f2 := m.ParentSpanId[:0]
 	for _, mm := range m.Attributes {
 		mm.ResetVT()
@@ -787,8 +798,9 @@ func (m *Span) ResetVT() {
 	m.Status.ReturnToVTPool()
 	m.Reset()
 	m.TraceId = f0
-	m.SpanId = f1
+	//m.SpanId = f1
 	m.ParentSpanId = f2
+	m.Attributes = f3
 }
 func (m *Span) ReturnToVTPool() {
 	if m != nil {
