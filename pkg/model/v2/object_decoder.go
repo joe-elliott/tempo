@@ -34,7 +34,7 @@ func (d *ObjectDecoder) PrepareForRead(obj []byte) (*tempopb.Trace, error) {
 		return nil, err
 	}
 
-	trace := tempopb.TraceFromVTPool()
+	trace := &tempopb.Trace{} //tempopb.TraceFromVTPool()
 	traceBytes := tempopb.TraceBytesFromVTPool()
 	err = traceBytes.UnmarshalVT(obj)
 	if err != nil {

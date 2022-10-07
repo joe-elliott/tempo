@@ -32,6 +32,11 @@ func init() {
 	encoding.RegisterCodec(newCodec())
 }
 
+type vtProtoMessage interface {
+	MarshalVT() (dAtA []byte, err error)
+	UnmarshalVT(dAtA []byte) error
+}
+
 // gogoCodec forces the use of gogo proto marshalling/unmarshalling for Tempo/Cortex/Jaeger/etcd structs
 type gogoCodec struct {
 }
@@ -55,6 +60,9 @@ func (c *gogoCodec) Marshal(v interface{}) ([]byte, error) {
 	if useGogo(elem) {
 		return gogoproto.Marshal(v.(gogoproto.Message))
 	}
+	if useVT(elem) {
+		return v.(vtProtoMessage).MarshalVT()
+	}
 	return proto.Marshal(v.(proto.Message))
 }
 
@@ -66,6 +74,9 @@ func (c *gogoCodec) Unmarshal(data []byte, v interface{}) error {
 	if useGogo(elem) {
 		return gogoproto.Unmarshal(data, v.(gogoproto.Message))
 	}
+	if useVT(elem) {
+		return v.(vtProtoMessage).UnmarshalVT(data)
+	}
 	return proto.Unmarshal(data, v.(proto.Message))
 }
 
@@ -76,4 +87,12 @@ func useGogo(t reflect.Type) bool {
 	}
 	pkgPath := t.PkgPath()
 	return strings.HasPrefix(pkgPath, frontendProtoGenPkgPath) /*|| strings.HasPrefix(pkgPath, tempoProtoGenPkgPath)*/ || strings.HasPrefix(pkgPath, jaegerProtoGenPkgPath) || strings.HasPrefix(pkgPath, jaegerModelPkgPath) || strings.HasPrefix(pkgPath, otelProtoPkgPath) || strings.HasPrefix(pkgPath, etcdAPIProtoPkgPath)
+}
+
+func useVT(t reflect.Type) bool { // jpe rename package
+	if t == nil {
+		return false
+	}
+	pkgPath := t.PkgPath()
+	return strings.HasPrefix(pkgPath, tempoProtoGenPkgPath)
 }
