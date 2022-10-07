@@ -56,6 +56,8 @@ func CreateBlock(ctx context.Context, cfg *common.BlockConfig, meta *backend.Blo
 			poolTr.ReturnToVTPool()
 		}
 
+		s.Add(trp, 0, 0) // start/end from wal meta is used
+
 		// Here we repurpose RowGroupSizeBytes as number of raw column values.
 		// This is a fairly close approximation.
 		if s.EstimatedBufferedBytes() > cfg.RowGroupSizeBytes {
