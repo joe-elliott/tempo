@@ -88,7 +88,7 @@ func (d *ObjectDecoder) Matches(id []byte, obj []byte, req *tempopb.SearchReques
 		return nil, err
 	}
 	defer func() {
-		t.ReturnToVTPool()
+		t.ReturnToVTPool() // jpe worth?
 	}()
 
 	return trace.MatchesProto(id, t, req)

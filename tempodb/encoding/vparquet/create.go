@@ -7,6 +7,8 @@ import (
 
 	"github.com/google/uuid"
 	tempo_io "github.com/grafana/tempo/pkg/io"
+	"github.com/grafana/tempo/pkg/tempopb"
+	v1 "github.com/grafana/tempo/pkg/tempopb/trace/v1"
 	"github.com/grafana/tempo/tempodb/backend"
 	"github.com/grafana/tempo/tempodb/encoding/common"
 	"github.com/pkg/errors"
@@ -46,12 +48,13 @@ func CreateBlock(ctx context.Context, cfg *common.BlockConfig, meta *backend.Blo
 		// Copy ID to allow it to escape the iterator.
 		id = append([]byte(nil), id...)
 
-		trp = traceToParquet(id, tr, trp)
-		err = s.Add(trp, 0, 0) // start and end time of the wal meta are used.
-		if err != nil {
-			return nil, err
+		trp := traceToParquet(id, tr, trp)
+		for _, b := range tr.Batches {
+			poolTr := &tempopb.Trace{
+				Batches: []*v1.ResourceSpans{b},
+			}
+			poolTr.ReturnToVTPool()
 		}
-		tr.ReturnToVTPool()
 
 		// Here we repurpose RowGroupSizeBytes as number of raw column values.
 		// This is a fairly close approximation.
