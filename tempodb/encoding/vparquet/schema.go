@@ -4,6 +4,7 @@ import (
 	"bytes"
 
 	"github.com/golang/protobuf/jsonpb" //nolint:all //deprecated
+	"github.com/grafana/tempo/pkg/leveledpool"
 	"github.com/grafana/tempo/pkg/tempopb"
 	v1 "github.com/grafana/tempo/pkg/tempopb/common/v1"
 	v1_resource "github.com/grafana/tempo/pkg/tempopb/resource/v1"
@@ -203,6 +204,16 @@ func attrToParquet(a *v1.KeyValue, p *Attribute) {
 	}
 }
 
+var (
+	resourceSpansPool = leveledpool.New[ResourceSpans](2, 4)
+	attributesPool    = leveledpool.New[Attribute](2, 8)
+	scopeSpansPool    = leveledpool.New[ScopeSpan](2, 4)
+	spansPool         = leveledpool.New[Span](2, 8)
+	eventsPool        = leveledpool.New[Event](2, 8)
+	bytesPool         = leveledpool.New[byte](1024, 8)
+	eventAttPool      = leveledpool.New[EventAttribute](2, 8)
+)
+
 func traceToParquet(id common.ID, tr *tempopb.Trace, ot *Trace) *Trace {
 	if ot == nil {
 		ot = &Trace{}
@@ -217,7 +228,7 @@ func traceToParquet(id common.ID, tr *tempopb.Trace, ot *Trace) *Trace {
 	var rootSpan *v1_trace.Span
 	var rootBatch *v1_trace.ResourceSpans
 
-	ot.ResourceSpans = extendReuseSlice(len(tr.Batches), ot.ResourceSpans)
+	ot.ResourceSpans = extendReuseSlice(len(tr.Batches), ot.ResourceSpans, resourceSpansPool)
 	for ib, b := range tr.Batches {
 		ob := &ot.ResourceSpans[ib]
 		// clear out any existing fields in case they were set on the original
@@ -232,7 +243,7 @@ func traceToParquet(id common.ID, tr *tempopb.Trace, ot *Trace) *Trace {
 		ob.Resource.K8sContainerName = nil
 
 		if b.Resource != nil {
-			ob.Resource.Attrs = extendReuseSlice(len(b.Resource.Attributes), ob.Resource.Attrs)
+			ob.Resource.Attrs = extendReuseSlice(len(b.Resource.Attributes), ob.Resource.Attrs, attributesPool)
 			attrCount := 0
 			for _, a := range b.Resource.Attributes {
 				strVal, ok := a.Value.Value.(*v1.AnyValue_StringValue)
@@ -272,7 +283,7 @@ func traceToParquet(id common.ID, tr *tempopb.Trace, ot *Trace) *Trace {
 			ob.Resource.Attrs = ob.Resource.Attrs[:attrCount]
 		}
 
-		ob.ScopeSpans = extendReuseSlice(len(b.ScopeSpans), ob.ScopeSpans)
+		ob.ScopeSpans = extendReuseSlice(len(b.ScopeSpans), ob.ScopeSpans, scopeSpansPool)
 		for iils, ils := range b.ScopeSpans {
 			oils := &ob.ScopeSpans[iils]
 			if ils.Scope != nil {
@@ -285,7 +296,7 @@ func traceToParquet(id common.ID, tr *tempopb.Trace, ot *Trace) *Trace {
 				oils.Scope.Version = ""
 			}
 
-			oils.Spans = extendReuseSlice(len(ils.Spans), oils.Spans)
+			oils.Spans = extendReuseSlice(len(ils.Spans), oils.Spans, spansPool)
 			for is, s := range ils.Spans {
 				ss := &oils.Spans[is]
 
@@ -300,7 +311,7 @@ func traceToParquet(id common.ID, tr *tempopb.Trace, ot *Trace) *Trace {
 					rootBatch = b
 				}
 
-				ss.Events = extendReuseSlice(len(s.Events), ss.Events)
+				ss.Events = extendReuseSlice(len(s.Events), ss.Events, eventsPool)
 				for ie, e := range s.Events {
 					eventToParquet(e, &ss.Events[ie])
 				}
@@ -328,14 +339,14 @@ func traceToParquet(id common.ID, tr *tempopb.Trace, ot *Trace) *Trace {
 					links := tempopb.LinkSlice{
 						Links: s.Links,
 					}
-					ss.Links = extendReuseSlice(links.Size(), ss.Links)
+					ss.Links = extendReuseSlice(links.Size(), ss.Links, bytesPool)
 					_, _ = links.MarshalToSizedBuffer(ss.Links)
 				} else {
 					ss.Links = ss.Links[:0] // you can 0 length slice a nil slice
 				}
 				ss.DroppedLinksCount = int32(s.DroppedLinksCount)
 
-				ss.Attrs = extendReuseSlice(len(s.Attributes), ss.Attrs)
+				ss.Attrs = extendReuseSlice(len(s.Attributes), ss.Attrs, attributesPool)
 				attrCount := 0
 				for _, a := range s.Attributes {
 					special := false
@@ -397,10 +408,10 @@ func eventToParquet(e *v1_trace.Span_Event, ee *Event) {
 	ee.TimeUnixNano = e.TimeUnixNano
 	ee.DroppedAttributesCount = int32(e.DroppedAttributesCount)
 
-	ee.Attrs = extendReuseSlice(len(e.Attributes), ee.Attrs)
+	ee.Attrs = extendReuseSlice(len(e.Attributes), ee.Attrs, eventAttPool)
 	for i, a := range e.Attributes {
 		ee.Attrs[i].Key = a.Key
-		ee.Attrs[i].Value = extendReuseSlice(a.Value.Size(), ee.Attrs[i].Value)
+		ee.Attrs[i].Value = extendReuseSlice(a.Value.Size(), ee.Attrs[i].Value, bytesPool)
 		_, _ = a.Value.MarshalToSizedBuffer(ee.Attrs[i].Value)
 	}
 }
@@ -613,11 +624,12 @@ func parquetTraceToTempopbTrace(parquetTrace *Trace) *tempopb.Trace {
 	return protoTrace
 }
 
-func extendReuseSlice[T any](sz int, in []T) []T {
+func extendReuseSlice[T any](sz int, in []T, pool *leveledpool.Pool[T]) []T {
 	if cap(in) >= sz {
 		// slice is large enough
 		return in[:sz]
 	}
 
-	return make([]T, sz)
+	pool.Put(in)
+	return pool.Get(sz)[:sz]
 }
