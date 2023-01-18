@@ -2,6 +2,7 @@ package vparquet
 
 import (
 	"context"
+	"fmt"
 	"path"
 	"testing"
 	"time"
@@ -18,6 +19,27 @@ import (
 	"github.com/grafana/tempo/tempodb/backend/local"
 	"github.com/grafana/tempo/tempodb/encoding/common"
 )
+
+func TestNothing(t *testing.T) {
+	wantTr := fullyPopulatedTestTrace(nil)
+	b := makeBackendBlockWithTraces(t, []*Trace{wantTr})
+	ctx := context.Background()
+
+	req := traceql.MustExtractFetchSpansRequest(`{ .service_name = "spanservicename" }`)
+
+	resp, err := b.Fetch(ctx, req, common.DefaultSearchOptions())
+	require.NoError(t, err, "search request:", req)
+
+	spanSet, err := resp.Results.Next(ctx)
+	require.NoError(t, err, "search request:", req)
+
+	fmt.Println("-----------")
+	fmt.Println(req.Query)
+	fmt.Println("-----------")
+	fmt.Println(resp.Results.(*spansetIterator).iter)
+	fmt.Println("-----------")
+	fmt.Println(spanSet)
+}
 
 func TestBackendBlockSearchTraceQL(t *testing.T) {
 	wantTr := fullyPopulatedTestTrace(nil)

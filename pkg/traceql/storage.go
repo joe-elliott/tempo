@@ -13,6 +13,7 @@ type Condition struct {
 }
 
 type FetchSpansRequest struct {
+	Query              string
 	StartTimeUnixNanos uint64
 	EndTimeUnixNanos   uint64
 	Conditions         []Condition
@@ -80,6 +81,7 @@ func ExtractFetchSpansRequest(query string) (FetchSpansRequest, error) {
 	}
 
 	req := FetchSpansRequest{
+		Query:         query,
 		AllConditions: true,
 	}
 
