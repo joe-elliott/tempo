@@ -4,7 +4,7 @@ go 1.20
 
 require (
 	cloud.google.com/go/storage v1.27.0
-	contrib.go.opencensus.io/exporter/prometheus v0.4.1
+	contrib.go.opencensus.io/exporter/prometheus v0.4.2
 	github.com/Azure/azure-pipeline-go v0.2.3
 	github.com/Azure/azure-storage-blob-go v0.15.0
 	github.com/Azure/go-autorest/autorest/adal v0.9.21
@@ -60,7 +60,7 @@ require (
 	github.com/prometheus/client_model v0.3.0
 	github.com/prometheus/common v0.37.0
 	github.com/prometheus/prometheus v1.8.2-0.20221021121301-51a44e6657c3
-	github.com/prometheus/statsd_exporter v0.21.0 // indirect
+	github.com/prometheus/statsd_exporter v0.22.7 // indirect
 	github.com/segmentio/fasthash v0.0.0-20180216231524-a72b379d632e
 	github.com/segmentio/parquet-go v0.0.0-20230201213121-e1109e2f6a20
 	github.com/sirupsen/logrus v1.8.1
