@@ -45,9 +45,9 @@ func (i *instance) Search(ctx context.Context, req *tempopb.SearchRequest) (*tem
 	// deadlocking with other activity (ingest, flushing), caused by releasing
 	// and then attempting to retake the lock.
 	i.blocksMtx.RLock()
+	defer i.blocksMtx.RUnlock()
 	i.searchWAL(ctx, req, sr)
 	i.searchLocalBlocks(ctx, req, sr)
-	i.blocksMtx.RUnlock()
 
 	sr.AllWorkersStarted()
 
