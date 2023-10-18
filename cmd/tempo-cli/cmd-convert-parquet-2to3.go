@@ -2,18 +2,17 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
-	"github.com/google/uuid"
 	"github.com/grafana/tempo/pkg/tempopb"
-	"github.com/grafana/tempo/pkg/traceql"
 	"github.com/grafana/tempo/tempodb/backend"
 	"github.com/grafana/tempo/tempodb/backend/local"
 	"github.com/grafana/tempo/tempodb/encoding/common"
-	"github.com/grafana/tempo/tempodb/encoding/vparquet2"
 	"github.com/grafana/tempo/tempodb/encoding/vparquet3"
 	"github.com/parquet-go/parquet-go"
 )
@@ -27,6 +26,10 @@ type convertParquet2to3 struct {
 func (cmd *convertParquet2to3) Run() error {
 	// open the in file
 	ctx := context.Background()
+
+	blockIsHere := "<some path>"
+
+	cmd.In = filepath.Join(blockIsHere, "data.parquet")
 
 	in, err := os.Open(cmd.In)
 	if err != nil {
@@ -45,9 +48,7 @@ func (cmd *convertParquet2to3) Run() error {
 	}
 
 	// create out block
-	if cmd.Out == "" {
-		cmd.Out = "./out"
-	}
+	cmd.Out = "./out2"
 	outR, outW, _, err := local.New(&local.Config{
 		Path: cmd.Out,
 	})
@@ -55,45 +56,29 @@ func (cmd *convertParquet2to3) Run() error {
 		return err
 	}
 
-	dedicatedCols := make([]backend.DedicatedColumn, 0, len(cmd.DedicatedColumns))
-	for _, col := range cmd.DedicatedColumns {
-		att, err := traceql.ParseIdentifier(col)
-		if err != nil {
-			return err
-		}
+	meta := &backend.BlockMeta{}
+	b, err := os.ReadFile(filepath.Join(blockIsHere, "meta.json"))
+	if err != nil {
+		return err
+	}
 
-		scope := backend.DedicatedColumnScopeSpan
-		if att.Scope == traceql.AttributeScopeResource {
-			scope = backend.DedicatedColumnScopeResource
-		}
-
-		fmt.Println("scope", scope, "name", att.Name)
-
-		dedicatedCols = append(dedicatedCols, backend.DedicatedColumn{
-			Scope: scope,
-			Name:  att.Name,
-			Type:  backend.DedicatedColumnTypeString,
-		})
+	err = json.Unmarshal(b, meta)
+	if err != nil {
+		return err
 	}
 
 	blockCfg := &common.BlockConfig{
 		BloomFP:             0.99,
-		BloomShardSizeBytes: 1024 * 1024,
+		BloomShardSizeBytes: 100 * 1024,
 		Version:             vparquet3.VersionString,
-		RowGroupSizeBytes:   100 * 1024 * 1024,
-		DedicatedColumns:    dedicatedCols,
-	}
-	meta := &backend.BlockMeta{
-		Version:          vparquet3.VersionString,
-		BlockID:          uuid.New(),
-		TenantID:         "test",
-		TotalObjects:     1000000, // required for bloom filter calculations
-		DedicatedColumns: dedicatedCols,
+		RowGroupSizeBytes:   10 * 1024 * 1024,
+		DedicatedColumns:    meta.DedicatedColumns,
 	}
 
 	// create iterator over in file
 	iter := &parquetIterator{
-		r: parquet.NewGenericReader[*vparquet2.Trace](pf),
+		meta: meta,
+		r:    parquet.NewGenericReader[*vparquet3.Trace](pf),
 	}
 
 	_, err = vparquet3.CreateBlock(ctx, blockCfg, meta, iter, backend.NewReader(outR), backend.NewWriter(outW))
@@ -105,12 +90,13 @@ func (cmd *convertParquet2to3) Run() error {
 }
 
 type parquetIterator struct {
-	r *parquet.GenericReader[*vparquet2.Trace]
-	i int
+	r    *parquet.GenericReader[*vparquet3.Trace]
+	meta *backend.BlockMeta
+	i    int
 }
 
 func (i *parquetIterator) Next(_ context.Context) (common.ID, *tempopb.Trace, error) {
-	traces := make([]*vparquet2.Trace, 1)
+	traces := make([]*vparquet3.Trace, 1)
 
 	i.i++
 	if i.i%1000 == 0 {
@@ -126,7 +112,7 @@ func (i *parquetIterator) Next(_ context.Context) (common.ID, *tempopb.Trace, er
 	}
 
 	pqTrace := traces[0]
-	pbTrace := vparquet2.ParquetTraceToTempopbTrace(pqTrace)
+	pbTrace := vparquet3.ParquetTraceToTempopbTrace(i.meta, pqTrace)
 	return pqTrace.TraceID, pbTrace, nil
 }
 
