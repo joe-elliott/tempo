@@ -10,11 +10,13 @@ type Role string
 
 const (
 	// individual roles
+	RoleNone             Role = "none"
 	RoleBloom            Role = "bloom"
 	RoleTraceIDIdx       Role = "trace-id-index"
 	RoleParquetFooter    Role = "parquet-footer"
 	RoleParquetColumnIdx Role = "parquet-column-idx"
 	RoleParquetOffsetIdx Role = "parquet-offset-idx"
+	RoleParquetPage      Role = "parquet-page"
 )
 
 // Provider is an object that can return a cache for a requested role
