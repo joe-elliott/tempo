@@ -112,6 +112,7 @@ func (r *readerWriter) ReadRange(ctx context.Context, name string, keypath backe
 		found, vals, _ := cache.Fetch(ctx, []string{k})
 		if len(found) > 0 {
 			copy(buffer, vals[0])
+			return nil
 		}
 	}
 
