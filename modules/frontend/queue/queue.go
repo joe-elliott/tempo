@@ -8,7 +8,6 @@ import (
 
 	"github.com/grafana/dskit/services"
 	"github.com/prometheus/client_golang/prometheus"
-	"go.uber.org/atomic"
 )
 
 const (
@@ -49,8 +48,6 @@ type Request interface{}
 type RequestQueue struct {
 	services.Service
 
-	connectedQuerierWorkers *atomic.Int32
-
 	mtx     sync.RWMutex
 	cond    contextCond // Notified when request is enqueued or dequeued, or querier is disconnected.
 	queues  *queues
@@ -62,14 +59,13 @@ type RequestQueue struct {
 
 func NewRequestQueue(maxOutstandingPerTenant int, forgetDelay time.Duration, queueLength *prometheus.GaugeVec, discardedRequests *prometheus.CounterVec) *RequestQueue {
 	q := &RequestQueue{
-		queues:                  newUserQueues(maxOutstandingPerTenant, forgetDelay),
-		connectedQuerierWorkers: atomic.NewInt32(0),
-		queueLength:             queueLength,
-		discardedRequests:       discardedRequests,
+		queues:            newUserQueues(maxOutstandingPerTenant, forgetDelay),
+		queueLength:       queueLength,
+		discardedRequests: discardedRequests,
 	}
 
 	q.cond = contextCond{Cond: sync.NewCond(&q.mtx)}
-	q.Service = services.NewTimerService(forgetCheckPeriod, nil, q.forgetDisconnectedQueriers, q.stopping).WithName("request queue")
+	q.Service = services.NewBasicService(nil, nil, q.stopping).WithName("request queue")
 
 	return q
 }
@@ -79,7 +75,7 @@ func NewRequestQueue(maxOutstandingPerTenant int, forgetDelay time.Duration, que
 // between calls.
 //
 // If request is successfully enqueued, successFn is called with the lock held, before any querier can receive the request.
-func (q *RequestQueue) EnqueueRequest(userID string, req Request, maxQueriers int) error {
+func (q *RequestQueue) EnqueueRequest(userID string, req Request) error {
 	q.mtx.RLock()
 	// don't defer a release. we won't know what we need to release until we call getQueueUnderRlock
 
@@ -89,7 +85,7 @@ func (q *RequestQueue) EnqueueRequest(userID string, req Request, maxQueriers in
 	}
 
 	// try to grab the user queue under read lock
-	queue, cleanup, err := q.getQueueUnderRlock(userID, maxQueriers)
+	queue, cleanup, err := q.getQueueUnderRlock(userID)
 	defer cleanup()
 	if err != nil {
 		return err
@@ -109,7 +105,7 @@ func (q *RequestQueue) EnqueueRequest(userID string, req Request, maxQueriers in
 // getQueueUnderRlock attempts to get the queue for the given user under read lock. if it is not
 // possible it upgrades the RLock to a Lock. This method also returns a cleanup function that
 // will release whichever lock it had to acquire to get the queue.
-func (q *RequestQueue) getQueueUnderRlock(userID string, maxQueriers int) (chan Request, func(), error) {
+func (q *RequestQueue) getQueueUnderRlock(userID string) (chan Request, func(), error) {
 	cleanup := func() {
 		q.mtx.RUnlock()
 	}
@@ -128,7 +124,7 @@ func (q *RequestQueue) getQueueUnderRlock(userID string, maxQueriers int) (chan 
 		q.mtx.Unlock()
 	}
 
-	queue := q.queues.getOrAddQueue(userID, maxQueriers)
+	queue := q.queues.getOrAddQueue(userID)
 	if queue == nil {
 		// This can only happen if userID is "".
 		return nil, cleanup, errors.New("no queue found")
@@ -139,7 +135,7 @@ func (q *RequestQueue) getQueueUnderRlock(userID string, maxQueriers int) (chan 
 
 // GetNextRequestForQuerier find next user queue and attempts to dequeue N requests as defined by the length of
 // batchBuffer. This slice is a reusable buffer to fill up with requests
-func (q *RequestQueue) GetNextRequestForQuerier(ctx context.Context, last UserIndex, querierID string, batchBuffer []Request) ([]Request, UserIndex, error) {
+func (q *RequestQueue) GetNextRequestForQuerier(ctx context.Context, last UserIndex, batchBuffer []Request) ([]Request, UserIndex, error) {
 	requestedCount := len(batchBuffer)
 	if requestedCount == 0 {
 		return nil, last, errors.New("batch buffer must have len > 0")
@@ -165,7 +161,7 @@ FindQueue:
 		return nil, last, err
 	}
 
-	queue, userID, idx := q.queues.getNextQueueForQuerier(last.last, querierID)
+	queue, userID, idx := q.queues.getNextQueue(last.last)
 	last.last = idx
 	if queue != nil {
 		// this is all threadsafe b/c all users queues are blocked by q.mtx
@@ -197,24 +193,11 @@ FindQueue:
 	goto FindQueue
 }
 
-func (q *RequestQueue) forgetDisconnectedQueriers(_ context.Context) error {
-	q.mtx.Lock()
-	defer q.mtx.Unlock()
-
-	if q.queues.forgetDisconnectedQueriers(time.Now()) > 0 {
-		// We need to notify goroutines cause having removed some queriers
-		// may have caused a resharding.
-		q.cond.Broadcast()
-	}
-
-	return nil
-}
-
 func (q *RequestQueue) stopping(_ error) error {
 	q.mtx.Lock()
 	defer q.mtx.Unlock()
 
-	for q.queues.len() > 0 && q.connectedQuerierWorkers.Load() > 0 {
+	for q.queues.len() > 0 {
 		q.cond.Wait(context.Background())
 	}
 
@@ -225,32 +208,6 @@ func (q *RequestQueue) stopping(_ error) error {
 	q.cond.Broadcast()
 
 	return nil
-}
-
-func (q *RequestQueue) RegisterQuerierConnection(querier string) {
-	q.connectedQuerierWorkers.Inc()
-
-	q.mtx.Lock()
-	defer q.mtx.Unlock()
-	q.queues.addQuerierConnection(querier)
-}
-
-func (q *RequestQueue) UnregisterQuerierConnection(querier string) {
-	q.connectedQuerierWorkers.Dec()
-
-	q.mtx.Lock()
-	defer q.mtx.Unlock()
-	q.queues.removeQuerierConnection(querier, time.Now())
-}
-
-func (q *RequestQueue) NotifyQuerierShutdown(querierID string) {
-	q.mtx.Lock()
-	defer q.mtx.Unlock()
-	q.queues.notifyQuerierShutdown(querierID)
-}
-
-func (q *RequestQueue) GetConnectedQuerierWorkersMetric() float64 {
-	return float64(q.connectedQuerierWorkers.Load())
 }
 
 // contextCond is a *sync.Cond with Wait() method overridden to support context-based waiting.

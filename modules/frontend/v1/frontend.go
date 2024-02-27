@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/grafana/dskit/flagext"
@@ -23,7 +24,6 @@ import (
 	"github.com/grafana/tempo/modules/frontend/queue"
 	"github.com/grafana/tempo/modules/frontend/v1/frontendv1pb"
 	"github.com/grafana/tempo/pkg/util"
-	"github.com/grafana/tempo/pkg/validation"
 )
 
 var errTooManyRequest = httpgrpc.Errorf(http.StatusTooManyRequests, "too many outstanding requests")
@@ -58,11 +58,13 @@ type Frontend struct {
 	limits Limits
 
 	requestQueue *queue.RequestQueue
-	activeUsers  *util.ActiveUsersCleanupService
+	activeUsers  *util.ActiveUsersCleanupService // jpe gru?
 
 	// Subservices manager.
 	subservices        *services.Manager
 	subservicesWatcher *services.FailureWatcher
+
+	connectedQuerierWorkers *atomic.Int32
 
 	// Metrics.
 	queueLength       *prometheus.GaugeVec
@@ -116,6 +118,7 @@ func New(cfg Config, limits Limits, log log.Logger, registerer prometheus.Regist
 
 	f.requestQueue = queue.NewRequestQueue(cfg.MaxOutstandingPerTenant, cfg.QuerierForgetDelay, f.queueLength, f.discardedRequests)
 	f.activeUsers = util.NewActiveUsersCleanupWithDefaultValues(f.cleanupInactiveUserMetrics)
+	f.connectedQuerierWorkers = new(atomic.Int32)
 
 	var err error
 	f.subservices, err = services.NewManager(f.requestQueue, f.activeUsers)
@@ -123,10 +126,11 @@ func New(cfg Config, limits Limits, log log.Logger, registerer prometheus.Regist
 		return nil, err
 	}
 
-	f.numClients = promauto.With(registerer).NewGaugeFunc(prometheus.GaugeOpts{
-		Name: "tempo_query_frontend_connected_clients",
-		Help: "Number of worker clients currently connected to the frontend.",
-	}, f.requestQueue.GetConnectedQuerierWorkersMetric)
+	// jpe restore?
+	// f.numClients = promauto.With(registerer).NewGaugeFunc(prometheus.GaugeOpts{
+	// 	Name: "tempo_query_frontend_connected_clients",
+	// 	Help: "Number of worker clients currently connected to the frontend.",
+	// }, f.requestQueue.GetConnectedQuerierWorkersMetric)
 
 	f.Service = services.NewBasicService(f.starting, f.running, f.stopping)
 	return f, nil
@@ -205,13 +209,13 @@ func (f *Frontend) RoundTripGRPC(ctx context.Context, req *httpgrpc.HTTPRequest)
 
 // Process allows backends to pull requests from the frontend.
 func (f *Frontend) Process(server frontendv1pb.Frontend_ProcessServer) error {
-	querierID, querierFeatures, err := getQuerierInfo(server)
+	_, querierFeatures, err := getQuerierInfo(server)
 	if err != nil {
 		return err
 	}
 
-	f.requestQueue.RegisterQuerierConnection(querierID)
-	defer f.requestQueue.UnregisterQuerierConnection(querierID)
+	f.connectedQuerierWorkers.Add(1)
+	defer f.connectedQuerierWorkers.Add(-1)
 
 	lastUserIndex := queue.FirstUser()
 
@@ -222,7 +226,7 @@ func (f *Frontend) Process(server frontendv1pb.Frontend_ProcessServer) error {
 	}
 	for {
 		reqSlice := make([]queue.Request, batchSize)
-		reqSlice, idx, err := f.requestQueue.GetNextRequestForQuerier(server.Context(), lastUserIndex, querierID, reqSlice)
+		reqSlice, idx, err := f.requestQueue.GetNextRequestForQuerier(server.Context(), lastUserIndex, reqSlice)
 		if err != nil {
 			return err
 		}
@@ -331,8 +335,7 @@ func reportResponseUpstream(reqBatch *requestBatch, errs chan error, resps chan 
 
 func (f *Frontend) NotifyClientShutdown(_ context.Context, req *frontendv1pb.NotifyClientShutdownRequest) (*frontendv1pb.NotifyClientShutdownResponse, error) {
 	level.Info(f.log).Log("msg", "received shutdown notification from querier", "querier", req.GetClientID())
-	f.requestQueue.NotifyQuerierShutdown(req.GetClientID())
-
+	// jpe use this to count queriers?
 	return &frontendv1pb.NotifyClientShutdownResponse{}, nil
 }
 
@@ -371,13 +374,10 @@ func (f *Frontend) queueRequest(ctx context.Context, req *request) error {
 	req.enqueueTime = now
 	req.queueSpan, _ = opentracing.StartSpanFromContext(ctx, "queued")
 
-	// aggregate the max queriers limit in the case of a multi tenant query
-	maxQueriers := validation.SmallestPositiveNonZeroIntPerTenant(tenantIDs, f.limits.MaxQueriersPerUser)
-
 	joinedTenantID := tenant.JoinTenantIDs(tenantIDs)
 	f.activeUsers.UpdateUserTimestamp(joinedTenantID, now)
 
-	err = f.requestQueue.EnqueueRequest(joinedTenantID, req, maxQueriers)
+	err = f.requestQueue.EnqueueRequest(joinedTenantID, req)
 	if errors.Is(err, queue.ErrTooManyRequests) {
 		return errTooManyRequest
 	}
@@ -388,7 +388,7 @@ func (f *Frontend) queueRequest(ctx context.Context, req *request) error {
 // chosen to match the same method in the ingester
 func (f *Frontend) CheckReady(_ context.Context) error {
 	// if we have more than one querier connected we will consider ourselves ready
-	connectedClients := f.requestQueue.GetConnectedQuerierWorkersMetric()
+	connectedClients := f.connectedQuerierWorkers.Load()
 	if connectedClients > 0 {
 		return nil
 	}
