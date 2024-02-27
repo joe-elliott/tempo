@@ -48,7 +48,6 @@ type Request interface{}
 type RequestQueue struct {
 	services.Service
 
-	mtx     sync.RWMutex
 	cond    contextCond // Notified when request is enqueued or dequeued, or querier is disconnected.
 	queues  *queues
 	stopped bool
@@ -64,8 +63,8 @@ func NewRequestQueue(maxOutstandingPerTenant int, forgetDelay time.Duration, que
 		discardedRequests: discardedRequests,
 	}
 
-	q.cond = contextCond{Cond: sync.NewCond(&q.mtx)}
-	q.Service = services.NewBasicService(nil, nil, q.stopping).WithName("request queue")
+	q.cond = contextCond{Cond: sync.NewCond(&sync.Mutex{})}                              // jpe - gru?
+	q.Service = services.NewBasicService(nil, nil, q.stopping).WithName("request queue") // jpe - go back to the old service type and add a timed event to clean up 0 len queues
 
 	return q
 }
@@ -76,19 +75,13 @@ func NewRequestQueue(maxOutstandingPerTenant int, forgetDelay time.Duration, que
 //
 // If request is successfully enqueued, successFn is called with the lock held, before any querier can receive the request.
 func (q *RequestQueue) EnqueueRequest(userID string, req Request) error {
-	q.mtx.RLock()
-	// don't defer a release. we won't know what we need to release until we call getQueueUnderRlock
-
-	if q.stopped {
-		q.mtx.RUnlock()
+	if q.stopped { // jpe protect q.stopped?
 		return ErrStopped
 	}
 
-	// try to grab the user queue under read lock
-	queue, cleanup, err := q.getQueueUnderRlock(userID)
-	defer cleanup()
-	if err != nil {
-		return err
+	queue := q.queues.getOrAddQueue(userID)
+	if queue == nil {
+		return errors.New("no queue found")
 	}
 
 	select {
@@ -102,37 +95,6 @@ func (q *RequestQueue) EnqueueRequest(userID string, req Request) error {
 	}
 }
 
-// getQueueUnderRlock attempts to get the queue for the given user under read lock. if it is not
-// possible it upgrades the RLock to a Lock. This method also returns a cleanup function that
-// will release whichever lock it had to acquire to get the queue.
-func (q *RequestQueue) getQueueUnderRlock(userID string) (chan Request, func(), error) {
-	cleanup := func() {
-		q.mtx.RUnlock()
-	}
-
-	uq := q.queues.userQueues[userID]
-	if uq != nil {
-		return uq.ch, cleanup, nil
-	}
-
-	// trade the read lock for a rw lock and then defer the opposite
-	// this method should be called under RLock() and return under RLock()
-	q.mtx.RUnlock()
-	q.mtx.Lock()
-
-	cleanup = func() {
-		q.mtx.Unlock()
-	}
-
-	queue := q.queues.getOrAddQueue(userID)
-	if queue == nil {
-		// This can only happen if userID is "".
-		return nil, cleanup, errors.New("no queue found")
-	}
-
-	return queue, cleanup, nil
-}
-
 // GetNextRequestForQuerier find next user queue and attempts to dequeue N requests as defined by the length of
 // batchBuffer. This slice is a reusable buffer to fill up with requests
 func (q *RequestQueue) GetNextRequestForQuerier(ctx context.Context, last UserIndex, batchBuffer []Request) ([]Request, UserIndex, error) {
@@ -140,9 +102,6 @@ func (q *RequestQueue) GetNextRequestForQuerier(ctx context.Context, last UserIn
 	if requestedCount == 0 {
 		return nil, last, errors.New("batch buffer must have len > 0")
 	}
-
-	q.mtx.Lock()
-	defer q.mtx.Unlock()
 
 	querierWait := false
 
@@ -164,22 +123,19 @@ FindQueue:
 	queue, userID, idx := q.queues.getNextQueue(last.last)
 	last.last = idx
 	if queue != nil {
-		// this is all threadsafe b/c all users queues are blocked by q.mtx
-		if len(queue) < requestedCount {
-			requestedCount = len(queue)
-		}
-
 		// Pick next requests from the queue.
-		batchBuffer = batchBuffer[:requestedCount]
+		foundInQueue := 0
 		for i := 0; i < requestedCount; i++ {
-			batchBuffer[i] = <-queue
+			select {
+			case batchBuffer[i] = <-queue:
+				foundInQueue++
+			default:
+				break // jpe does this break the loop or the select?
+			}
 		}
+		batchBuffer = batchBuffer[:foundInQueue] // jpe correct calcs?
 
-		qLen := len(queue)
-		if qLen == 0 {
-			q.queues.deleteQueue(userID)
-		}
-		q.queueLength.WithLabelValues(userID).Set(float64(qLen))
+		q.queueLength.WithLabelValues(userID).Set(float64(len(queue)))
 
 		// Tell close() we've processed a request.
 		q.cond.Broadcast()
@@ -194,9 +150,7 @@ FindQueue:
 }
 
 func (q *RequestQueue) stopping(_ error) error {
-	q.mtx.Lock()
-	defer q.mtx.Unlock()
-
+	// drain all queues
 	for q.queues.len() > 0 {
 		q.cond.Wait(context.Background())
 	}

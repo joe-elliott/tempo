@@ -1,6 +1,7 @@
 package queue
 
 import (
+	"sync"
 	"time"
 )
 
@@ -11,6 +12,8 @@ type queues struct {
 
 	maxUserQueueSize int
 	users            []string
+
+	mtx sync.RWMutex
 }
 
 type userQueue struct {
@@ -29,22 +32,10 @@ func newUserQueues(maxUserQueueSize int, forgetDelay time.Duration) *queues {
 }
 
 func (q *queues) len() int {
+	q.mtx.RLock()
+	defer q.mtx.RUnlock()
+
 	return len(q.userQueues)
-}
-
-func (q *queues) deleteQueue(userID string) {
-	uq := q.userQueues[userID]
-	if uq == nil {
-		return
-	}
-
-	delete(q.userQueues, userID)
-	q.users[uq.index] = ""
-
-	// Shrink users list size if possible. This is safe, and no users will be skipped during iteration.
-	for ix := len(q.users) - 1; ix >= 0 && q.users[ix] == ""; ix-- {
-		q.users = q.users[:ix]
-	}
 }
 
 // Returns existing or new queue for user.
@@ -57,28 +48,36 @@ func (q *queues) getOrAddQueue(userID string) chan Request {
 		return nil
 	}
 
+	// start with an RLock, and upgrade to a Lock if we need to add a new user
+	q.mtx.RLock()
 	uq := q.userQueues[userID]
+	q.mtx.RUnlock()
 
-	if uq == nil {
-		uq = &userQueue{
-			ch: make(chan Request, q.maxUserQueueSize),
-		}
-		q.userQueues[userID] = uq
+	if uq != nil {
+		return uq.ch
+	}
 
-		// Add user to the list of users... find first free spot, and put it there.
-		for ix, u := range q.users {
-			if u == "" {
-				uq.index = ix
-				q.users[ix] = userID
-				break
-			}
-		}
+	q.mtx.Lock()
+	defer q.mtx.Unlock()
 
-		// ... or add to the end.
-		if uq.index < 0 {
-			uq.index = len(q.users)
-			q.users = append(q.users, userID)
+	uq = &userQueue{
+		ch: make(chan Request, q.maxUserQueueSize),
+	}
+	q.userQueues[userID] = uq
+
+	// Add user to the list of users... find first free spot, and put it there.
+	for ix, u := range q.users {
+		if u == "" {
+			uq.index = ix
+			q.users[ix] = userID
+			break
 		}
+	}
+
+	// ... or add to the end.
+	if uq.index < 0 {
+		uq.index = len(q.users)
+		q.users = append(q.users, userID)
 	}
 
 	return uq.ch
@@ -88,6 +87,9 @@ func (q *queues) getOrAddQueue(userID string) chan Request {
 // to pass last user index returned by this function as argument. Is there was no previous
 // last user index, use -1.
 func (q *queues) getNextQueue(lastUserIndex int) (chan Request, string, int) {
+	q.mtx.RLock()
+	defer q.mtx.RUnlock()
+
 	uid := lastUserIndex
 
 	for iters := 0; iters < len(q.users); iters++ {
@@ -109,4 +111,31 @@ func (q *queues) getNextQueue(lastUserIndex int) (chan Request, string, int) {
 		return q.ch, u, uid
 	}
 	return nil, "", uid
+}
+
+// jpe - clean up func - add race cond tests
+func (q *queues) deleteEmptyQueues() {
+	q.mtx.Lock()
+	defer q.mtx.Unlock()
+
+	for u, uq := range q.userQueues {
+		if len(uq.ch) == 0 {
+			q.deleteQueue(u)
+		}
+	}
+}
+
+func (q *queues) deleteQueue(userID string) {
+	uq := q.userQueues[userID]
+	if uq == nil {
+		return
+	}
+
+	delete(q.userQueues, userID)
+	q.users[uq.index] = ""
+
+	// Shrink users list size if possible. This is safe, and no users will be skipped during iteration.
+	for ix := len(q.users) - 1; ix >= 0 && q.users[ix] == ""; ix-- {
+		q.users = q.users[:ix]
+	}
 }
