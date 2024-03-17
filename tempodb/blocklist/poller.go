@@ -159,7 +159,7 @@ func (p *Poller) Do(previous *List) (PerTenant, PerTenantCompacted, error) {
 	//  i'm not sure why the ingester does that
 	tenantQueues := flushqueues.NewPriorityQueue(nil) // some metric
 
-	consecutiveErrors := 0
+	// add tenants to queue
 	for _, tenantID := range tenants {
 		lastTenantPoll := time.Time{}
 		if last, ok := tenantsPolled[tenantID]; ok {
@@ -180,6 +180,7 @@ func (p *Poller) Do(previous *List) (PerTenant, PerTenantCompacted, error) {
 		}
 	}
 
+	consecutiveErrors := 0
 	wg := sync.WaitGroup{}
 	for i := 0; i < 10; i++ { // some configured concurrency value
 		wg.Add(1)
@@ -192,7 +193,7 @@ func (p *Poller) Do(previous *List) (PerTenant, PerTenantCompacted, error) {
 				}
 
 				// we need a new method here or maybe just a new object if this feels like it's doesn't belong
-				// in the priority queue
+				// in the priority queue. the standard .Dequeue blocks
 				done, op := tenantQueues.DequeueWithoutBlocking()
 				if done {
 					return
