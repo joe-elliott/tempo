@@ -20,6 +20,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/grafana/tempo/pkg/boundedwaitgroup"
+	"github.com/grafana/tempo/pkg/flushqueues"
 	"github.com/grafana/tempo/tempodb/backend"
 )
 
@@ -148,39 +149,97 @@ func (p *Poller) Do(previous *List) (PerTenant, PerTenantCompacted, error) {
 	blocklist := PerTenant{}
 	compactedBlocklist := PerTenantCompacted{}
 
+	// it makes most sense to me for the List object to own this. instead of the poller.
+	//  it could be as simple as recording .Now() when the poll is complete or it could attempt to use the block metas to determine it
+	//  thinking about this more deeply i think the priority queue should be based on the amount of time it takes to poll a tenant
+	//  then the last time a poll was complete. this will cause the queue to move those tenants to the front that take the most time
+	//  to poll
+	tenantsPolled := make(map[string]time.Time)
+	// use the priority queue instead of the exclusive queue. we don't need to align exact goroutines with exact queues
+	//  i'm not sure why the ingester does that
+	tenantQueues := flushqueues.NewPriorityQueue(nil) // some metric
+
 	consecutiveErrors := 0
-
 	for _, tenantID := range tenants {
-		newBlockList, newCompactedBlockList, err := p.pollTenantAndCreateIndex(ctx, tenantID, previous)
+		lastTenantPoll := time.Time{}
+		if last, ok := tenantsPolled[tenantID]; ok {
+			lastTenantPoll = last
+		}
+
+		// handle added. should never happen but we should consider it an error
+		added, err := tenantQueues.Enqueue(&tenantOp{
+			lastPoll: lastTenantPoll,
+			tenantID: tenantID,
+		})
 		if err != nil {
-			level.Error(p.logger).Log("msg", "failed to poll or create index for tenant", "tenant", tenantID, "err", err)
-			consecutiveErrors++
-			if consecutiveErrors > p.cfg.TolerateConsecutiveErrors {
-				level.Error(p.logger).Log("msg", "exiting polling loop early because too many errors", "errCount", consecutiveErrors)
-				return nil, nil, err
-			}
-			continue
+			metricBlocklistErrors.WithLabelValues(tenantID).Inc()
+			return nil, nil, err
 		}
-
-		consecutiveErrors = 0
-		if len(newBlockList) > 0 || len(newCompactedBlockList) > 0 {
-			blocklist[tenantID] = newBlockList
-			compactedBlocklist[tenantID] = newCompactedBlockList
-
-			metricBlocklistLength.WithLabelValues(tenantID).Set(float64(len(newBlockList)))
-
-			backendMetaMetrics := sumTotalBackendMetaMetrics(newBlockList, newCompactedBlockList)
-			metricBackendObjects.WithLabelValues(tenantID, blockStatusLiveLabel).Set(float64(backendMetaMetrics.blockMetaTotalObjects))
-			metricBackendObjects.WithLabelValues(tenantID, blockStatusCompactedLabel).Set(float64(backendMetaMetrics.compactedBlockMetaTotalObjects))
-			metricBackendBytes.WithLabelValues(tenantID, blockStatusLiveLabel).Set(float64(backendMetaMetrics.blockMetaTotalBytes))
-			metricBackendBytes.WithLabelValues(tenantID, blockStatusCompactedLabel).Set(float64(backendMetaMetrics.compactedBlockMetaTotalBytes))
-			continue
+		if !added {
+			// !!!
 		}
-		metricBlocklistLength.DeleteLabelValues(tenantID)
-		metricBackendObjects.DeleteLabelValues(tenantID)
-		metricBackendObjects.DeleteLabelValues(tenantID)
-		metricBackendBytes.DeleteLabelValues(tenantID)
 	}
+
+	wg := sync.WaitGroup{}
+	for i := 0; i < 10; i++ { // some configured concurrency value
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			for {
+				if ctx.Err() != nil {
+					return
+				}
+
+				// we need a new method here or maybe just a new object if this feels like it's doesn't belong
+				// in the priority queue
+				done, op := tenantQueues.DequeueWithoutBlocking()
+				if done {
+					return
+				}
+
+				tenantID := op.tenantID
+				newBlockList, newCompactedBlockList, err := p.pollTenantAndCreateIndex(ctx, tenantID, previous)
+
+				// likely use a mutex here to protect consecutive errors and final error. other ways to protect
+				// these values
+
+				if err != nil {
+					level.Error(p.logger).Log("msg", "failed to poll or create index for tenant", "tenant", tenantID, "err", err)
+					consecutiveErrors++
+					if consecutiveErrors > p.cfg.TolerateConsecutiveErrors {
+						// cancel context here so all polling and goroutines return
+						level.Error(p.logger).Log("msg", "exiting polling loop early because too many errors", "errCount", consecutiveErrors)
+						return
+					}
+					continue
+				}
+
+				consecutiveErrors = 0
+				if len(newBlockList) > 0 || len(newCompactedBlockList) > 0 {
+					blocklist[tenantID] = newBlockList
+					compactedBlocklist[tenantID] = newCompactedBlockList
+
+					metricBlocklistLength.WithLabelValues(tenantID).Set(float64(len(newBlockList)))
+
+					backendMetaMetrics := sumTotalBackendMetaMetrics(newBlockList, newCompactedBlockList)
+					metricBackendObjects.WithLabelValues(tenantID, blockStatusLiveLabel).Set(float64(backendMetaMetrics.blockMetaTotalObjects))
+					metricBackendObjects.WithLabelValues(tenantID, blockStatusCompactedLabel).Set(float64(backendMetaMetrics.compactedBlockMetaTotalObjects))
+					metricBackendBytes.WithLabelValues(tenantID, blockStatusLiveLabel).Set(float64(backendMetaMetrics.blockMetaTotalBytes))
+					metricBackendBytes.WithLabelValues(tenantID, blockStatusCompactedLabel).Set(float64(backendMetaMetrics.compactedBlockMetaTotalBytes))
+					continue
+				}
+				metricBlocklistLength.DeleteLabelValues(tenantID)
+				metricBackendObjects.DeleteLabelValues(tenantID)
+				metricBackendObjects.DeleteLabelValues(tenantID)
+				metricBackendBytes.DeleteLabelValues(tenantID)
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	// check error if it exists and return otherwise return blocklist and compactedBlocklist
 
 	return blocklist, compactedBlocklist, nil
 }
