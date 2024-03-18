@@ -110,6 +110,10 @@ type Poller struct {
 
 	sharder JobSharder
 	logger  log.Logger
+
+	// the weight to store in here should be experimented with. i think length of time to poll makes
+	// more sense than last poll time
+	tenantsPolled map[string]time.Time
 }
 
 // NewPoller creates the Poller
@@ -119,9 +123,10 @@ func NewPoller(cfg *PollerConfig, sharder JobSharder, reader backend.Reader, com
 		compactor: compactor,
 		writer:    writer,
 
-		cfg:     cfg,
-		sharder: sharder,
-		logger:  logger,
+		cfg:           cfg,
+		sharder:       sharder,
+		logger:        logger,
+		tenantsPolled: map[string]time.Time{},
 	}
 }
 
@@ -149,12 +154,6 @@ func (p *Poller) Do(previous *List) (PerTenant, PerTenantCompacted, error) {
 	blocklist := PerTenant{}
 	compactedBlocklist := PerTenantCompacted{}
 
-	// it makes most sense to me for the List object to own this. instead of the poller.
-	//  it could be as simple as recording .Now() when the poll is complete or it could attempt to use the block metas to determine it
-	//  thinking about this more deeply i think the priority queue should be based on the amount of time it takes to poll a tenant
-	//  then the last time a poll was complete. this will cause the queue to move those tenants to the front that take the most time
-	//  to poll
-	tenantsPolled := make(map[string]time.Time)
 	// use the priority queue instead of the exclusive queue. we don't need to align exact goroutines with exact queues
 	//  i'm not sure why the ingester does that
 	tenantQueues := flushqueues.NewPriorityQueue(nil) // some metric
@@ -162,7 +161,7 @@ func (p *Poller) Do(previous *List) (PerTenant, PerTenantCompacted, error) {
 	// add tenants to queue
 	for _, tenantID := range tenants {
 		lastTenantPoll := time.Time{}
-		if last, ok := tenantsPolled[tenantID]; ok {
+		if last, ok := p.tenantsPolled[tenantID]; ok {
 			lastTenantPoll = last
 		}
 
