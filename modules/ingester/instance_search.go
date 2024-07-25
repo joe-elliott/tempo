@@ -41,7 +41,7 @@ func (i *instance) Search(ctx context.Context, req *tempopb.SearchRequest) (*tem
 
 	var (
 		resultsMtx = sync.Mutex{}
-		combiner   = traceql.NewMetadataCombiner()
+		combiner   = traceql.NewMetadataCombiner(maxResults)
 		metrics    = &tempopb.SearchMetrics{}
 		opts       = common.DefaultSearchOptions()
 		anyErr     atomic.Error

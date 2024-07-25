@@ -2,6 +2,7 @@ package traceql
 
 import (
 	"fmt"
+	"math/rand"
 	"slices"
 	"strings"
 	"testing"
@@ -265,6 +266,45 @@ func TestCombineResults(t *testing.T) {
 
 			require.Equal(t, tc.expected, tc.existing)
 		})
+	}
+}
+
+func TestCombinerKeepsMostRecent(t *testing.T) {
+	totalTraces := 10
+	keepMostRecent := 5
+	combiner := NewMetadataCombiner(keepMostRecent)
+
+	// make traces
+	traces := make([]*tempopb.TraceSearchMetadata, totalTraces)
+	for i := 0; i < totalTraces; i++ {
+		traces[i] = &tempopb.TraceSearchMetadata{
+			TraceID:           fmt.Sprintf("trace-%d", i),
+			StartTimeUnixNano: uint64(i),
+		}
+	}
+
+	// save off the most recent and reverse b/c the combiner returns most recent first
+	expected := make([]*tempopb.TraceSearchMetadata, 0, keepMostRecent)
+	expected = append(expected, traces[totalTraces-keepMostRecent:totalTraces]...)
+	slices.Reverse(expected)
+
+	// randomize order
+	rand.Shuffle(totalTraces, func(i, j int) {
+		traces[i], traces[j] = traces[j], traces[i]
+	})
+
+	// add to combiner
+	for i := 0; i < totalTraces; i++ {
+		combiner.AddMetadata(traces[i])
+	}
+
+	// test that the most recent are kept
+	actual := combiner.Metadata()
+	require.Equal(t, expected, actual)
+	require.Equal(t, keepMostRecent, combiner.Count())
+	require.Equal(t, expected[len(expected)-1].StartTimeUnixNano, combiner.OldestTimestamp())
+	for _, tr := range expected {
+		require.True(t, combiner.Exists(tr.TraceID))
 	}
 }
 

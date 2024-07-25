@@ -109,7 +109,7 @@ func (e *Engine) ExecuteSearch(ctx context.Context, searchReq *tempopb.SearchReq
 		Traces:  nil,
 		Metrics: &tempopb.SearchMetrics{},
 	}
-	combiner := NewMetadataCombiner()
+	combiner := NewMetadataCombiner(int(searchReq.Limit))
 	for {
 		spanset, err := iterator.Next(ctx)
 		if err != nil && !errors.Is(err, io.EOF) {
@@ -120,10 +120,6 @@ func (e *Engine) ExecuteSearch(ctx context.Context, searchReq *tempopb.SearchReq
 			break
 		}
 		combiner.AddMetadata(e.asTraceSearchMetadata(spanset))
-
-		if combiner.Count() >= int(searchReq.Limit) && searchReq.Limit > 0 {
-			break
-		}
 	}
 	res.Traces = combiner.Metadata()
 

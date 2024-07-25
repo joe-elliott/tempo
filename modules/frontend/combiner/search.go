@@ -12,7 +12,7 @@ var _ GRPCCombiner[*tempopb.SearchResponse] = (*genericCombiner[*tempopb.SearchR
 
 // NewSearch returns a search combiner
 func NewSearch(limit int) Combiner {
-	metadataCombiner := traceql.NewMetadataCombiner()
+	metadataCombiner := traceql.NewMetadataCombiner(limit)
 	diffTraces := map[string]struct{}{}
 
 	return &genericCombiner[*tempopb.SearchResponse]{

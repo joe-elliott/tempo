@@ -1,19 +1,23 @@
 package traceql
 
 import (
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/grafana/tempo/pkg/tempopb"
 )
 
 type MetadataCombiner struct {
-	trs map[string]*tempopb.TraceSearchMetadata
+	trs            map[string]*tempopb.TraceSearchMetadata
+	trsSorted      []*tempopb.TraceSearchMetadata
+	keepMostRecent int
 }
 
-func NewMetadataCombiner() *MetadataCombiner {
+func NewMetadataCombiner(keepMostRecent int) *MetadataCombiner {
 	return &MetadataCombiner{
-		trs: make(map[string]*tempopb.TraceSearchMetadata),
+		trs:            make(map[string]*tempopb.TraceSearchMetadata, keepMostRecent),
+		trsSorted:      make([]*tempopb.TraceSearchMetadata, 0, keepMostRecent),
+		keepMostRecent: keepMostRecent,
 	}
 }
 
@@ -25,7 +29,27 @@ func (c *MetadataCombiner) AddMetadata(new *tempopb.TraceSearchMetadata) {
 		return
 	}
 
+	if c.Count() == c.keepMostRecent && c.keepMostRecent > 0 {
+		// if this is older than the oldest element, bail
+		if c.OldestTimestamp() > new.StartTimeUnixNano {
+			return
+		}
+
+		// otherwise remove the oldest element and we'll add the new one below
+		oldest := c.trsSorted[c.Count()-1]
+		delete(c.trs, oldest.TraceID)
+		c.trsSorted = c.trsSorted[:len(c.trsSorted)-1]
+	}
+
+	// insert new in the right spot
 	c.trs[new.TraceID] = new
+	idx, _ := slices.BinarySearchFunc(c.trsSorted, new, func(a, b *tempopb.TraceSearchMetadata) int {
+		if a.StartTimeUnixNano > b.StartTimeUnixNano {
+			return -1
+		}
+		return 1
+	})
+	c.trsSorted = slices.Insert(c.trsSorted, idx, new)
 }
 
 func (c *MetadataCombiner) Count() int {
@@ -38,14 +62,15 @@ func (c *MetadataCombiner) Exists(id string) bool {
 }
 
 func (c *MetadataCombiner) Metadata() []*tempopb.TraceSearchMetadata {
-	m := make([]*tempopb.TraceSearchMetadata, 0, len(c.trs))
-	for _, tr := range c.trs {
-		m = append(m, tr)
+	return c.trsSorted
+}
+
+func (c *MetadataCombiner) OldestTimestamp() uint64 {
+	if len(c.trsSorted) == 0 {
+		return 0
 	}
-	sort.Slice(m, func(i, j int) bool {
-		return m[i].StartTimeUnixNano > m[j].StartTimeUnixNano
-	})
-	return m
+
+	return c.trsSorted[len(c.trsSorted)-1].StartTimeUnixNano
 }
 
 // combineSearchResults overlays the incoming search result with the existing result. This is required
