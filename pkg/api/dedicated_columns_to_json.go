@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"sync"
 	"unsafe"
 
 	"github.com/grafana/tempo/tempodb/backend"
@@ -9,6 +10,8 @@ import (
 
 type DedicatedColumnsToJSON struct {
 	columnsToJSON map[uint64]string
+
+	mtx sync.Mutex
 }
 
 func NewDedicatedColumnsToJSON() *DedicatedColumnsToJSON {
@@ -23,6 +26,10 @@ func (d *DedicatedColumnsToJSON) JSONForDedicatedColumns(cols backend.DedicatedC
 	}
 
 	hash := cols.Hash()
+
+	d.mtx.Lock()
+	defer d.mtx.Unlock()
+
 	if jsonString, ok := d.columnsToJSON[hash]; ok {
 		return jsonString, nil
 	}

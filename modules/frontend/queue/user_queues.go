@@ -124,6 +124,10 @@ func (q *queues) getNextQueueForQuerier(lastUserIndex int) (chan Request, string
 			continue
 		}
 
+		if len(q.ch) == 0 {
+			continue
+		}
+
 		return q.ch, u, uid
 	}
 	return nil, "", uid

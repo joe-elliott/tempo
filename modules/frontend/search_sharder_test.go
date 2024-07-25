@@ -1,7 +1,6 @@
 package frontend
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -224,9 +223,10 @@ func TestBuildBackendRequests(t *testing.T) {
 
 		ctx, cancelCause := context.WithCancelCause(context.Background())
 		reqCh := make(chan pipeline.Request)
+		iterFn := backendJobsFunc(tc.metas, tc.targetBytesPerRequest)
 
 		go func() {
-			buildBackendRequests(ctx, "test", pipeline.NewHTTPRequest(req), searchReq, tc.metas, tc.targetBytesPerRequest, reqCh, cancelCause)
+			buildBackendRequests(ctx, "test", pipeline.NewHTTPRequest(req), searchReq, iterFn, reqCh, cancelCause)
 		}()
 
 		actualURIs := []string{}
@@ -317,10 +317,10 @@ func TestBackendRequests(t *testing.T) {
 
 			ctx, cancelCause := context.WithCancelCause(context.Background())
 			pipelineRequest := pipeline.NewHTTPRequest(r)
-			jobs, blocks, blockBytes := s.backendRequests(ctx, "test", pipelineRequest, searchReq, reqCh, cancelCause)
-			require.Equal(t, tc.expectedJobs, jobs)
-			require.Equal(t, tc.expectedBlocks, blocks)
-			require.Equal(t, tc.expectedBlockBytes, blockBytes)
+			searchJobResponse := s.backendRequests(ctx, "test", pipelineRequest, searchReq, &combiner.SearchJobResponse{}, reqCh, cancelCause)
+			require.Equal(t, tc.expectedJobs, searchJobResponse.TotalJobs)
+			require.Equal(t, tc.expectedBlocks, searchJobResponse.TotalBlocks)
+			require.Equal(t, tc.expectedBlockBytes, searchJobResponse.TotalBytes)
 
 			actualReqURIs := []string{}
 			for r := range reqCh {
@@ -494,7 +494,7 @@ func TestIngesterRequests(t *testing.T) {
 
 		pr := pipeline.NewHTTPRequest(req)
 		pr.SetWeight(2)
-		err = s.ingesterRequests(context.Background(), "test", pr, *searchReq, reqChan)
+		_, err = s.ingesterRequests(context.Background(), "test", pr, *searchReq, reqChan) // jpe test _
 		if tc.expectedError != nil {
 			assert.Equal(t, tc.expectedError, err)
 			continue
@@ -680,29 +680,24 @@ func TestTotalJobsIncludesIngester(t *testing.T) {
 	resps, err := testRT.RoundTrip(pipeline.NewHTTPRequest(req))
 	require.NoError(t, err)
 	// find a response with total jobs > . this is the metadata response
-	var resp *tempopb.SearchResponse
+
+	totalJobs := 0
 	for {
 		res, done, err := resps.Next(context.Background())
-		r := res.HTTPResponse()
-		require.NoError(t, err)
-		require.Equal(t, 200, r.StatusCode)
 
-		actualResp := &tempopb.SearchResponse{}
-		bytesResp, err := io.ReadAll(r.Body)
-		require.NoError(t, err)
-		err = jsonpb.Unmarshal(bytes.NewReader(bytesResp), actualResp)
-		require.NoError(t, err)
+		if res.IsMetadata() {
+			searchJobResponse := res.(*combiner.SearchJobResponse)
+			totalJobs += searchJobResponse.TotalJobs
 
-		if actualResp.Metrics.TotalJobs > 0 {
-			resp = actualResp
 			break
 		}
 
+		require.NoError(t, err)
 		require.False(t, done)
 	}
 
-	// 2 jobs for the meta + 1 for th ingester
-	assert.Equal(t, uint32(3), resp.Metrics.TotalJobs)
+	// 2 jobs for the meta + 1 for the ingester
+	assert.Equal(t, 3, totalJobs)
 }
 
 func TestSearchSharderRoundTripBadRequest(t *testing.T) {

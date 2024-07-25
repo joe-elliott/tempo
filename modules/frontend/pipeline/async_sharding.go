@@ -14,6 +14,8 @@ type waitGroup interface {
 	Wait()
 }
 
+// todo: the resps argument in New(Blocking)AsyncSharderChan is silly. the caller should be able to send this.
+
 // NewAsyncSharderFunc creates a new AsyncResponse that shards requests to the next AsyncRoundTripper[combiner.PipelineResponse]. It creates one
 // goroutine per concurrent request.
 func NewAsyncSharderFunc(ctx context.Context, concurrentReqs, totalReqs int, reqFn func(i int) Request, next AsyncRoundTripper[combiner.PipelineResponse]) Responses[combiner.PipelineResponse] {
