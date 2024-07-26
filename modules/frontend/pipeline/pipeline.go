@@ -11,6 +11,7 @@ type Request interface {
 	HTTPRequest() *http.Request
 	Context() context.Context
 	WithContext(context.Context)
+	Clone() Request
 
 	SetCacheKey(string)
 	CacheKey() string
@@ -40,6 +41,14 @@ func (r HTTPRequest) Context() context.Context {
 	}
 
 	return r.req.Context()
+}
+
+func (r *HTTPRequest) Clone() Request {
+	return &HTTPRequest{
+		req:          r.req.Clone(r.req.Context()),
+		cacheKey:     r.cacheKey,
+		responseData: r.responseData,
+	}
 }
 
 func (r *HTTPRequest) WithContext(ctx context.Context) {

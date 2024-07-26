@@ -150,6 +150,7 @@ func runnerBadRequestOnOrgID(t *testing.T, f *QueryFrontend) {
 	require.Equal(t, status.Error(codes.InvalidArgument, "no org id"), err)
 }
 
+// jpe - extend to include blocks from multiple time range shards
 func runnerRequests(t *testing.T, f *QueryFrontend) {
 	tcs := []struct {
 		name    string

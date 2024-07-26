@@ -31,7 +31,7 @@ func (c *MetadataCombiner) AddMetadata(new *tempopb.TraceSearchMetadata) {
 
 	if c.Count() == c.keepMostRecent && c.keepMostRecent > 0 {
 		// if this is older than the oldest element, bail
-		if c.OldestTimestamp() > new.StartTimeUnixNano {
+		if c.OldestTimestampNanos() > new.StartTimeUnixNano {
 			return
 		}
 
@@ -65,7 +65,7 @@ func (c *MetadataCombiner) Metadata() []*tempopb.TraceSearchMetadata {
 	return c.trsSorted
 }
 
-func (c *MetadataCombiner) OldestTimestamp() uint64 {
+func (c *MetadataCombiner) OldestTimestampNanos() uint64 {
 	if len(c.trsSorted) == 0 {
 		return 0
 	}

@@ -233,6 +233,10 @@ func (p *testPipelineResponse) RequestData() any {
 	return nil
 }
 
+func (p *testPipelineResponse) IsMetadata() bool {
+	return false
+}
+
 func newTestCombiner() *genericCombiner[*tempopb.ServiceStats] {
 	count := 0
 

@@ -39,7 +39,7 @@ func TestSearchProgressShouldQuit(t *testing.T) {
 
 	// unparseable body should not quit, but should return an error
 	c = NewSearch(0)
-	err = c.AddResponse(&pipelineResponse{&http.Response{Body: io.NopCloser(strings.NewReader("foo")), StatusCode: 200}})
+	err = c.AddResponse(&testPipelineResponse{&http.Response{Body: io.NopCloser(strings.NewReader("foo")), StatusCode: 200}})
 	require.Error(t, err)
 	should = c.ShouldQuit()
 	require.False(t, should)
@@ -386,18 +386,6 @@ func TestSearchDiffsResults(t *testing.T) {
 	require.Equal(t, expectedDiff2, actual)
 }
 
-type pipelineResponse struct {
-	r *http.Response
-}
-
-func (p *pipelineResponse) HTTPResponse() *http.Response {
-	return p.r
-}
-
-func (p *pipelineResponse) RequestData() any {
-	return nil
-}
-
 func toHTTPResponse(t *testing.T, pb proto.Message, statusCode int) PipelineResponse {
 	var body string
 
@@ -408,7 +396,7 @@ func toHTTPResponse(t *testing.T, pb proto.Message, statusCode int) PipelineResp
 		require.NoError(t, err)
 	}
 
-	return &pipelineResponse{&http.Response{
+	return &testPipelineResponse{&http.Response{
 		Body:       io.NopCloser(strings.NewReader(body)),
 		StatusCode: statusCode,
 	}}

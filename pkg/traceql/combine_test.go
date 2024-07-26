@@ -302,7 +302,7 @@ func TestCombinerKeepsMostRecent(t *testing.T) {
 	actual := combiner.Metadata()
 	require.Equal(t, expected, actual)
 	require.Equal(t, keepMostRecent, combiner.Count())
-	require.Equal(t, expected[len(expected)-1].StartTimeUnixNano, combiner.OldestTimestamp())
+	require.Equal(t, expected[len(expected)-1].StartTimeUnixNano, combiner.OldestTimestampNanos())
 	for _, tr := range expected {
 		require.True(t, combiner.Exists(tr.TraceID))
 	}

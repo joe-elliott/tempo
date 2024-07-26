@@ -22,6 +22,13 @@ type pipelineResponse struct {
 	requestData any
 }
 
+func NewPipelineResponse(r *http.Response) combiner.PipelineResponse {
+	return pipelineResponse{
+		r:           r,
+		requestData: nil,
+	}
+}
+
 func (p pipelineResponse) HTTPResponse() *http.Response {
 	return p.r
 }
@@ -30,9 +37,20 @@ func (p pipelineResponse) RequestData() any {
 	return p.requestData
 }
 
+func (p pipelineResponse) IsMetadata() bool {
+	return false
+}
+
 // syncResponse is a single http.Response that implements the Responses[*http.Response] interface.
 type syncResponse struct {
 	r combiner.PipelineResponse
+}
+
+// NewAsyncResponse creates a new AsyncResponse that wraps a single http.Response.
+func NewAsyncResponse(r combiner.PipelineResponse) Responses[combiner.PipelineResponse] {
+	return syncResponse{
+		r: r,
+	}
 }
 
 // NewHTTPToAsyncResponse creates a new AsyncResponse that wraps a single http.Response.
@@ -78,6 +96,18 @@ func (s syncResponse) Next(ctx context.Context) (combiner.PipelineResponse, bool
 	}
 
 	return s.r, true, nil
+}
+
+type AsyncResponseSender interface {
+	Responses[combiner.PipelineResponse]
+
+	Send(ctx context.Context, r Responses[combiner.PipelineResponse])
+	SendError(err error)
+	SendComplete()
+}
+
+func NewAsyncResponseSender() AsyncResponseSender {
+	return newAsyncResponse()
 }
 
 var _ Responses[combiner.PipelineResponse] = &asyncResponse{}

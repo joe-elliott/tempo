@@ -1,12 +1,32 @@
 package combiner
 
 import (
+	"net/http"
 	"sort"
+	"time"
 
 	"github.com/grafana/tempo/pkg/search"
 	"github.com/grafana/tempo/pkg/tempopb"
 	"github.com/grafana/tempo/pkg/traceql"
 )
+
+var _ PipelineResponse = (*ShardCompletionResponse)(nil) // jpe - pointer or value?
+
+type ShardCompletionResponse struct {
+	CompletedThrough uint32
+}
+
+func (s *ShardCompletionResponse) HTTPResponse() *http.Response {
+	return nil
+}
+
+func (s *ShardCompletionResponse) RequestData() any {
+	return nil
+}
+
+func (s *ShardCompletionResponse) IsMetadata() bool {
+	return true
+}
 
 var _ GRPCCombiner[*tempopb.SearchResponse] = (*genericCombiner[*tempopb.SearchResponse])(nil)
 
@@ -14,6 +34,7 @@ var _ GRPCCombiner[*tempopb.SearchResponse] = (*genericCombiner[*tempopb.SearchR
 func NewSearch(limit int) Combiner {
 	metadataCombiner := traceql.NewMetadataCombiner(limit)
 	diffTraces := map[string]struct{}{}
+	completedThrough := uint32(0)
 
 	return &genericCombiner[*tempopb.SearchResponse]{
 		httpStatusCode: 200,
@@ -40,14 +61,22 @@ func NewSearch(limit int) Combiner {
 				// if TotalJobs is nonzero then assume its the special response
 				if partial.Metrics.TotalJobs == 0 {
 					final.Metrics.CompletedJobs++
-
-					final.Metrics.InspectedBytes += partial.Metrics.InspectedBytes
-					final.Metrics.InspectedTraces += partial.Metrics.InspectedTraces
 				} else {
-					final.Metrics.TotalBlocks += partial.Metrics.TotalBlocks
-					final.Metrics.TotalJobs += partial.Metrics.TotalJobs
-					final.Metrics.TotalBlockBytes += partial.Metrics.TotalBlockBytes
+					final.Metrics.CompletedJobs += partial.Metrics.CompletedJobs
 				}
+
+				final.Metrics.InspectedBytes += partial.Metrics.InspectedBytes
+				final.Metrics.InspectedTraces += partial.Metrics.InspectedTraces
+				final.Metrics.TotalBlocks += partial.Metrics.TotalBlocks
+				final.Metrics.TotalJobs += partial.Metrics.TotalJobs
+				final.Metrics.TotalBlockBytes += partial.Metrics.TotalBlockBytes
+			}
+
+			return nil
+		},
+		metadata: func(resp PipelineResponse) error {
+			if sc, ok := resp.(*ShardCompletionResponse); ok {
+				completedThrough = sc.CompletedThrough
 			}
 
 			return nil
@@ -72,12 +101,19 @@ func NewSearch(limit int) Combiner {
 					continue
 				}
 
+				// only append traces that are newer than completedThrough. this prevents us from sending traces that may get replaced by newer ones
+				if tr.StartTimeUnixNano <= uint64(completedThrough)*uint64(time.Second) { // jpe consolidate compare?
+					continue
+				}
+
 				diff.Traces = append(diff.Traces, tr)
 			}
 
 			sort.Slice(diff.Traces, func(i, j int) bool {
 				return diff.Traces[i].StartTimeUnixNano > diff.Traces[j].StartTimeUnixNano
 			})
+
+			// jpe - use completed through to only return newer traces
 
 			addRootSpanNotReceivedText(diff.Traces)
 
@@ -93,7 +129,9 @@ func NewSearch(limit int) Combiner {
 				return false
 			}
 
-			return metadataCombiner.Count() >= limit
+			// jpe - use completed through to only quit if all traces are newer than completedThrough
+			//   test - is this nanos vs secs?
+			return metadataCombiner.Count() >= limit && metadataCombiner.OldestTimestampNanos() < uint64(completedThrough)*uint64(time.Second)
 		},
 	}
 }

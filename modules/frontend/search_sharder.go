@@ -67,10 +67,12 @@ func newAsyncSearchSharder(reader tempodb.Reader, o overrides.Interface, cfg Sea
 func (s asyncSearchSharder) RoundTrip(pipelineRequest pipeline.Request) (pipeline.Responses[combiner.PipelineResponse], error) {
 	r := pipelineRequest.HTTPRequest()
 
-	searchReq, err := api.ParseSearchRequest(r)
+	searchReq, err := api.ParseSearchRequest(r) // jpe - could parse and pass search request in the searchRequest struct
 	if err != nil {
 		return pipeline.NewBadRequest(err), nil
 	}
+
+	shardedSearchReq := pipelineRequest.(*shardedSearchRequest) // jpe fall back to old behavior?
 
 	// adjust limit based on config
 	searchReq.Limit, err = adjustLimit(searchReq.Limit, s.cfg.DefaultLimit, s.cfg.MaxLimit)
@@ -97,7 +99,7 @@ func (s asyncSearchSharder) RoundTrip(pipelineRequest pipeline.Request) (pipelin
 
 	// build request to search ingesters based on query_ingesters_until config and time range
 	// pass subCtx in requests so we can cancel and exit early
-	err = s.ingesterRequests(ctx, tenantID, r, *searchReq, reqCh)
+	err = s.ingesterRequests(ctx, tenantID, r, *searchReq, reqCh) // jpe - need to pass shard start/end not request start/end
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +109,7 @@ func (s asyncSearchSharder) RoundTrip(pipelineRequest pipeline.Request) (pipelin
 	ingesterJobs := len(reqCh)
 
 	// pass subCtx in requests so we can cancel and exit early
-	totalJobs, totalBlocks, totalBlockBytes := s.backendRequests(ctx, tenantID, r, searchReq, reqCh, func(err error) {
+	totalJobs, totalBlocks, totalBlockBytes := s.backendRequests(ctx, tenantID, r, searchReq, shardedSearchReq.shardStart, shardedSearchReq.shardEnd, reqCh, func(err error) {
 		// todo: actually find a way to return this error to the user
 		s.logger.Log("msg", "search: failed to build backend requests", "err", err)
 	})
@@ -116,7 +118,7 @@ func (s asyncSearchSharder) RoundTrip(pipelineRequest pipeline.Request) (pipelin
 	// send a job to communicate the search metrics. this is consumed by the combiner to calculate totalblocks/bytes/jobs
 	var jobMetricsResponse pipeline.Responses[combiner.PipelineResponse]
 	if totalJobs > 0 {
-		resp := &tempopb.SearchResponse{
+		resp := &tempopb.SearchResponse{ // jpe - turn into metadata?
 			Metrics: &tempopb.SearchMetrics{
 				TotalBlocks:     uint32(totalBlocks),
 				TotalBlockBytes: totalBlockBytes,
@@ -138,16 +140,31 @@ func (s asyncSearchSharder) RoundTrip(pipelineRequest pipeline.Request) (pipelin
 }
 
 // blockMetas returns all relevant blockMetas given a start/end
-func (s *asyncSearchSharder) blockMetas(start, end int64, tenantID string) []*backend.BlockMeta {
+func (s *asyncSearchSharder) blockMetas(start, end int64, inclusiveEnd bool, tenantID string) []*backend.BlockMeta {
 	// reduce metas to those in the requested range
 	allMetas := s.reader.BlockMetas(tenantID)
-	metas := make([]*backend.BlockMeta, 0, len(allMetas)/50) // divide by 50 for luck
+	metas := make([]*backend.BlockMeta, 0, len(allMetas)/50) // divide by 50 for luck // jpe - add a filter func? which would allow for less copying of slices?
 	for _, m := range allMetas {
-		if m.StartTime.Unix() <= end &&
-			m.EndTime.Unix() >= start &&
-			m.ReplicationFactor == backend.DefaultReplicationFactor { // This check skips generator blocks (RF=1)
-			metas = append(metas, m)
+		if m.ReplicationFactor != backend.DefaultReplicationFactor { // This check skips generator blocks (RF=1)
+			continue
 		}
+
+		// blocks completely outside the bounds
+		blockStart := m.StartTime.Unix()
+		blockEnd := m.EndTime.Unix()
+		if blockStart > end {
+			continue
+		}
+		if blockEnd < start {
+			continue
+		}
+
+		// straddles the end of the requested range. only include if inclusiveEnd is true
+		if blockEnd > end && blockStart < end && !inclusiveEnd { // jpe - can a block be included 2x?
+			continue
+		}
+
+		metas = append(metas, m)
 	}
 
 	return metas
@@ -155,17 +172,17 @@ func (s *asyncSearchSharder) blockMetas(start, end int64, tenantID string) []*ba
 
 // backendRequest builds backend requests to search backend blocks. backendRequest takes ownership of reqCh and closes it.
 // it returns 3 int values: totalBlocks, totalBlockBytes, and estimated jobs
-func (s *asyncSearchSharder) backendRequests(ctx context.Context, tenantID string, parent *http.Request, searchReq *tempopb.SearchRequest, reqCh chan<- pipeline.Request, errFn func(error)) (totalJobs, totalBlocks int, totalBlockBytes uint64) {
+func (s *asyncSearchSharder) backendRequests(ctx context.Context, tenantID string, parent *http.Request, searchReq *tempopb.SearchRequest, shardStart, shardEnd uint32, reqCh chan<- pipeline.Request, errFn func(error)) (totalJobs, totalBlocks int, totalBlockBytes uint64) {
 	var blocks []*backend.BlockMeta
 
 	// request without start or end, search only in ingester
-	if searchReq.Start == 0 || searchReq.End == 0 {
+	if shardStart == 0 || shardEnd == 0 {
 		close(reqCh)
 		return
 	}
 
 	// calculate duration (start and end) to search the backend blocks
-	start, end := backendRange(searchReq.Start, searchReq.End, s.cfg.QueryBackendAfter)
+	start, end := backendRange(shardStart, shardEnd, s.cfg.QueryBackendAfter)
 
 	// no need to search backend
 	if start == end {
@@ -174,7 +191,9 @@ func (s *asyncSearchSharder) backendRequests(ctx context.Context, tenantID strin
 	}
 
 	// get block metadata of blocks in start, end duration
-	blocks = s.blockMetas(int64(start), int64(end), tenantID)
+	//  this normally returns inclusive at the start of the range and exclusive on the end. however, we need to
+	//  be inclusive at the end of the range if its the very first request
+	blocks = s.blockMetas(int64(start), int64(end), searchReq.End == end, tenantID)
 
 	targetBytesPerRequest := s.cfg.TargetBytesPerRequest
 
@@ -320,6 +339,8 @@ func buildBackendRequests(ctx context.Context, tenantID string, parent *http.Req
 				continue
 			}
 
+			// jpe - "works by accident" issue here. SearchRequest is nil on SearchBlockRequest which makes the start/end params
+			//  fall through .BuildSearchBlockRequest correctly. may want to smooth this out to prevent a future bug
 			subR, err = api.BuildSearchBlockRequest(subR, &tempopb.SearchBlockRequest{
 				BlockID:          blockID,
 				StartPage:        uint32(startPage),

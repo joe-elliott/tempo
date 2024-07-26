@@ -243,7 +243,7 @@ func TestBuildBackendRequests(t *testing.T) {
 	}
 }
 
-func TestBackendRequests(t *testing.T) {
+func TestBackendRequests(t *testing.T) { // jpe - extend? combine with above? confirm inclusive/exclusive logic works with shardstart/end
 	bm := backend.NewBlockMeta("test", uuid.New(), "wdwad", backend.EncGZIP, "asdf")
 	bm.StartTime = time.Unix(100, 0)
 	bm.EndTime = time.Unix(200, 0)
@@ -258,6 +258,8 @@ func TestBackendRequests(t *testing.T) {
 	tests := []struct {
 		name               string
 		request            string
+		shardStart         uint32
+		shardEnd           uint32
 		expectedReqsURIs   []string
 		expectedJobs       int
 		expectedBlocks     int
@@ -270,6 +272,8 @@ func TestBackendRequests(t *testing.T) {
 				"/querier?blockID=" + bm.BlockID.String() + "&dataEncoding=asdf&encoding=gzip&end=200&footerSize=0&indexPageSize=0&limit=50&maxDuration=30ms&minDuration=10ms&pagesToSearch=1&size=209715200&start=100&startPage=0&tags=foo%3Dbar&totalRecords=2&version=wdwad",
 				"/querier?blockID=" + bm.BlockID.String() + "&dataEncoding=asdf&encoding=gzip&end=200&footerSize=0&indexPageSize=0&limit=50&maxDuration=30ms&minDuration=10ms&pagesToSearch=1&size=209715200&start=100&startPage=1&tags=foo%3Dbar&totalRecords=2&version=wdwad",
 			},
+			shardStart:         100,
+			shardEnd:           200,
 			expectedJobs:       2,
 			expectedBlocks:     1,
 			expectedBlockBytes: defaultTargetBytesPerRequest * 2,
@@ -281,6 +285,8 @@ func TestBackendRequests(t *testing.T) {
 				"/querier?blockID=" + bm.BlockID.String() + "&dataEncoding=asdf&encoding=gzip&end=150&footerSize=0&indexPageSize=0&limit=50&maxDuration=30ms&minDuration=10ms&pagesToSearch=1&size=209715200&start=110&startPage=0&tags=foo%3Dbar&totalRecords=2&version=wdwad",
 				"/querier?blockID=" + bm.BlockID.String() + "&dataEncoding=asdf&encoding=gzip&end=150&footerSize=0&indexPageSize=0&limit=50&maxDuration=30ms&minDuration=10ms&pagesToSearch=1&size=209715200&start=110&startPage=1&tags=foo%3Dbar&totalRecords=2&version=wdwad",
 			},
+			shardStart:         110,
+			shardEnd:           150,
 			expectedJobs:       2,
 			expectedBlocks:     1,
 			expectedBlockBytes: defaultTargetBytesPerRequest * 2,
@@ -288,6 +294,8 @@ func TestBackendRequests(t *testing.T) {
 		{
 			name:             "start and end out of block",
 			request:          "/?tags=foo%3Dbar&minDuration=10ms&maxDuration=30ms&limit=50&start=10&end=20",
+			shardStart:       10,
+			shardEnd:         20,
 			expectedReqsURIs: make([]string, 0),
 		},
 		{
@@ -318,7 +326,7 @@ func TestBackendRequests(t *testing.T) {
 
 			ctx, cancelCause := context.WithCancelCause(context.Background())
 
-			jobs, blocks, blockBytes := s.backendRequests(ctx, "test", r, searchReq, reqCh, cancelCause)
+			jobs, blocks, blockBytes := s.backendRequests(ctx, "test", r, searchReq, tc.shardStart, tc.shardEnd, reqCh, cancelCause)
 			require.Equal(t, tc.expectedJobs, jobs)
 			require.Equal(t, tc.expectedBlocks, blocks)
 			require.Equal(t, tc.expectedBlockBytes, blockBytes)
@@ -676,13 +684,15 @@ func TestTotalJobsIncludesIngester(t *testing.T) {
 	}, log.NewNopLogger())
 	testRT := sharder.Wrap(next)
 
-	path := fmt.Sprintf("/?start=%d&end=%d", now-1, now+1)
+	reqStart := uint32(now - 1)
+	reqEnd := uint32(now + 1)
+	path := fmt.Sprintf("/?start=%d&end=%d", reqStart, reqEnd)
 	req := httptest.NewRequest("GET", path, nil)
 	ctx := req.Context()
 	ctx = user.InjectOrgID(ctx, "blerg")
 	req = req.WithContext(ctx)
 
-	resps, err := testRT.RoundTrip(pipeline.NewHTTPRequest(req))
+	resps, err := testRT.RoundTrip(newSearchSharderRequestWithStartEnd(req, reqStart, reqEnd))
 	require.NoError(t, err)
 	// find a response with total jobs > . this is the metadata response
 	var resp *tempopb.SearchResponse
@@ -727,18 +737,18 @@ func TestSearchSharderRoundTripBadRequest(t *testing.T) {
 
 	// no org id
 	req := httptest.NewRequest("GET", "/?start=1000&end=1100", nil)
-	resp, err := testRT.RoundTrip(pipeline.NewHTTPRequest(req))
+	resp, err := testRT.RoundTrip(newSearchSharderRequest(req))
 	testBadRequestFromResponses(t, resp, err, "no org id")
 
 	// start/end outside of max duration
 	req = httptest.NewRequest("GET", "/?start=1000&end=1500", nil)
 	req = req.WithContext(user.InjectOrgID(req.Context(), "blerg"))
-	resp, err = testRT.RoundTrip(pipeline.NewHTTPRequest(req))
+	resp, err = testRT.RoundTrip(newSearchSharderRequest(req))
 	testBadRequestFromResponses(t, resp, err, "range specified by start and end exceeds 5m0s. received start=1000 end=1500")
 
 	// bad request
 	req = httptest.NewRequest("GET", "/?start=asdf&end=1500", nil)
-	resp, err = testRT.RoundTrip(pipeline.NewHTTPRequest(req))
+	resp, err = testRT.RoundTrip(newSearchSharderRequest(req))
 	testBadRequestFromResponses(t, resp, err, "invalid start: strconv.ParseInt: parsing \"asdf\": invalid syntax")
 
 	// test max duration error with overrides
@@ -760,7 +770,7 @@ func TestSearchSharderRoundTripBadRequest(t *testing.T) {
 
 	req = httptest.NewRequest("GET", "/?start=1000&end=1500", nil)
 	req = req.WithContext(user.InjectOrgID(req.Context(), "blerg"))
-	resp, err = testRT.RoundTrip(pipeline.NewHTTPRequest(req))
+	resp, err = testRT.RoundTrip(newSearchSharderRequest(req))
 	testBadRequestFromResponses(t, resp, err, "range specified by start and end exceeds 1m0s. received start=1000 end=1500")
 }
 
@@ -884,4 +894,16 @@ func urisEqual(t *testing.T, expectedURIs, actualURIs []string) {
 
 		assert.Equal(t, e, a)
 	}
+}
+
+func newSearchSharderRequestWithStartEnd(req *http.Request, shardStart, shardEnd uint32) *shardedSearchRequest {
+	return &shardedSearchRequest{
+		Request:    pipeline.NewHTTPRequest(req),
+		shardStart: shardStart,
+		shardEnd:   shardEnd,
+	}
+}
+
+func newSearchSharderRequest(req *http.Request) *shardedSearchRequest {
+	return newSearchSharderRequestWithStartEnd(req, 0, 0)
 }

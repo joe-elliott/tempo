@@ -61,7 +61,7 @@ func (i *instance) Search(ctx context.Context, req *tempopb.SearchRequest) (*tem
 		// if endtime = 0 in means the block is not yet completed and we should always search it
 		if combiner.Count() >= maxResults &&
 			!blockMeta.EndTime.IsZero() &&
-			blockMeta.EndTime.Unix() < int64(combiner.OldestTimestamp()) {
+			blockMeta.EndTime.Unix() < int64(combiner.OldestTimestampNanos()) {
 			return
 		}
 
