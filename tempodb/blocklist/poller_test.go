@@ -186,6 +186,122 @@ func TestTenantIndexBuilder(t *testing.T) {
 	}
 }
 
+// TestBlocksSortedByEndTime pins the behavior that blocks are sorted by end time from
+// most recent to least. The query-frontend (and perhaps others) depends on this behavior
+// when building jobs.
+func TestBlocksSortedByEndTime(t *testing.T) {
+	tests := []struct {
+		name                  string
+		list                  PerTenant
+		compactedList         PerTenantCompacted
+		expectedList          PerTenant
+		expectedCompactedList PerTenantCompacted
+	}{
+		{
+			name: "sorted by end time",
+			list: PerTenant{
+				"test": []*backend.BlockMeta{
+					{
+						BlockID: uuid.MustParse("00000000-0000-0000-0000-000000000001"),
+						EndTime: time.Unix(100, 0),
+					},
+					{
+						BlockID: uuid.MustParse("00000000-0000-0000-0000-000000000003"),
+						EndTime: time.Unix(300, 0),
+					},
+					{
+						BlockID: uuid.MustParse("00000000-0000-0000-0000-000000000002"),
+						EndTime: time.Unix(200, 0),
+					},
+				},
+			},
+			compactedList: PerTenantCompacted{
+				"test": []*backend.CompactedBlockMeta{
+					{
+						BlockMeta: backend.BlockMeta{
+							BlockID: uuid.MustParse("00000000-0000-0000-0000-000000000005"),
+							EndTime: time.Unix(200, 0),
+						},
+					},
+					{
+						BlockMeta: backend.BlockMeta{
+							BlockID: uuid.MustParse("00000000-0000-0000-0000-000000000006"),
+							EndTime: time.Unix(300, 0),
+						},
+					},
+					{
+						BlockMeta: backend.BlockMeta{
+							BlockID: uuid.MustParse("00000000-0000-0000-0000-000000000004"),
+							EndTime: time.Unix(100, 0),
+						},
+					},
+				},
+			},
+			expectedList: PerTenant{
+				"test": []*backend.BlockMeta{
+					{
+						BlockID: uuid.MustParse("00000000-0000-0000-0000-000000000003"),
+						EndTime: time.Unix(300, 0),
+					},
+					{
+						BlockID: uuid.MustParse("00000000-0000-0000-0000-000000000002"),
+						EndTime: time.Unix(200, 0),
+					},
+					{
+						BlockID: uuid.MustParse("00000000-0000-0000-0000-000000000001"),
+						EndTime: time.Unix(100, 0),
+					},
+				},
+			},
+			expectedCompactedList: PerTenantCompacted{
+				"test": []*backend.CompactedBlockMeta{
+					{
+						BlockMeta: backend.BlockMeta{
+							BlockID: uuid.MustParse("00000000-0000-0000-0000-000000000006"),
+							EndTime: time.Unix(300, 0),
+						},
+					},
+					{
+						BlockMeta: backend.BlockMeta{
+							BlockID: uuid.MustParse("00000000-0000-0000-0000-000000000005"),
+							EndTime: time.Unix(200, 0),
+						},
+					},
+					{
+						BlockMeta: backend.BlockMeta{
+							BlockID: uuid.MustParse("00000000-0000-0000-0000-000000000004"),
+							EndTime: time.Unix(100, 0),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newMockCompactor(tc.compactedList, false)
+			r := newMockReader(tc.list, tc.compactedList, false)
+			w := &backend.MockWriter{}
+			b := newBlocklist(PerTenant{}, PerTenantCompacted{})
+
+			poller := NewPoller(&PollerConfig{
+				PollConcurrency:     testPollConcurrency,
+				PollFallback:        testPollFallback,
+				TenantIndexBuilders: testBuilders,
+			}, &mockJobSharder{
+				owns: true,
+			}, r, c, w, log.NewNopLogger())
+			actualList, actualCompactedList, err := poller.Do(b)
+
+			// confirm return as expected
+			assert.Equal(t, tc.expectedList, actualList)
+			assert.Equal(t, tc.expectedCompactedList, actualCompactedList)
+			assert.NoError(t, err)
+		})
+	}
+}
+
 func TestTenantIndexFallback(t *testing.T) {
 	tests := []struct {
 		name                      string

@@ -332,11 +332,11 @@ func (p *Poller) pollTenantBlocks(
 	newCompactedBlocklist = append(newCompactedBlocklist, newCm...)
 
 	sort.Slice(newBlockList, func(i, j int) bool {
-		return newBlockList[i].StartTime.Before(newBlockList[j].StartTime)
+		return newBlockList[i].EndTime.After(newBlockList[j].EndTime)
 	})
 
 	sort.Slice(newCompactedBlocklist, func(i, j int) bool {
-		return newCompactedBlocklist[i].StartTime.Before(newCompactedBlocklist[j].StartTime)
+		return newCompactedBlocklist[i].EndTime.After(newCompactedBlocklist[j].EndTime)
 	})
 
 	return newBlockList, newCompactedBlocklist, nil
