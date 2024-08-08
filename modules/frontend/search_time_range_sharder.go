@@ -14,39 +14,9 @@ import (
 	"github.com/grafana/tempo/tempodb/backend"
 )
 
-// sharder that takes an interface? or functions to provide a generic way to shard a given query over
-// a time range. we will execute queries in reverse time order starting from the end and progressing
-// toward the start. every time a query finishes we will check the combiner to see if the query is
-// complete. if it is then we will sort and return the results
-
-// add a local interface for a "combinersorter" to sort results
-
 // todo: jpe
-//  - execute one request for each hour working backwards
-//    - 2 simultaneous requests
-//  - combiner no longer quits early if limit is reached
-//  - after each batch check add all traces to a mega combiner and check if the limit is reached
-//  - adjust the sharder to be exclusive on either the front or end of the range
-//  - time range sharder passes a new request struct, url is original request range. shard start/end are added to the struct and are used for block choices
-//  - handle start/end = 0 i.e. an ingester only search
-
-// JPE!?
-//  . search metrics are broken? 24 jobs for 24 hours of search? - seemed fine in tempo-dev-01
-// . send all data back immediately
-//   . send back a marker occassiaonlly saying THIS MUCH DONE. only send that much back
-// . add a "metadata response"
-
-// . completed jobs is often 1 less of total jobs
-// . find a way to pass actual total jobs from the time range sharder. bar repeatedly resets in grafana
-
-// JPE TODAY:
-// shardedSearchRequest is an already parsed http request used by search_sharder.go
-//  includes a slice of block metas to search this allows the time range sharder to
-//  correctly calculate the total number of jobs to send back to the combiner
-//  AND avoids bugs where the blocklist changes in between shards received
-// 1) pull block metas in a local var from the .reader with a new filter func
-// 3) don't break on start/end time shards. just send 100 at a time or something simple.
-//   4) subslice the block metas instead of alloc'ing new
+//  blocks have to be decided in one spot - time range sharder and passed to the search sharder
+//  accept perf regression on creating a bunch of goroutines. fix later by fixing the lock in the buried queue. the only reason we have so many goroutines is to put pressure on that lock
 
 // jpe
 //  start a cross tenant limitations doc? include the fact that multitenant is not guaranteed to return the most recent traces
