@@ -14,7 +14,6 @@ import (
 
 	"github.com/grafana/tempo/modules/frontend/combiner"
 	"github.com/grafana/tempo/modules/frontend/pipeline"
-	"github.com/grafana/tempo/modules/overrides"
 	"github.com/grafana/tempo/pkg/api"
 	"github.com/grafana/tempo/pkg/tempopb"
 	"github.com/grafana/tempo/pkg/traceql"
@@ -38,19 +37,17 @@ type SearchSharderConfig struct {
 }
 
 type asyncSearchSharder struct {
-	next      pipeline.AsyncRoundTripper[combiner.PipelineResponse]
-	overrides overrides.Interface
+	next pipeline.AsyncRoundTripper[combiner.PipelineResponse]
 
 	cfg    SearchSharderConfig
 	logger log.Logger
 }
 
 // newAsyncSearchSharder creates a sharding middleware for search
-func newAsyncSearchSharder(o overrides.Interface, cfg SearchSharderConfig, logger log.Logger) pipeline.AsyncMiddleware[combiner.PipelineResponse] {
+func newAsyncSearchSharder(cfg SearchSharderConfig, logger log.Logger) pipeline.AsyncMiddleware[combiner.PipelineResponse] {
 	return pipeline.AsyncMiddlewareFunc[combiner.PipelineResponse](func(next pipeline.AsyncRoundTripper[combiner.PipelineResponse]) pipeline.AsyncRoundTripper[combiner.PipelineResponse] {
 		return asyncSearchSharder{
-			next:      next,
-			overrides: o,
+			next: next,
 
 			cfg:    cfg,
 			logger: logger,
@@ -64,18 +61,10 @@ func newAsyncSearchSharder(o overrides.Interface, cfg SearchSharderConfig, logge
 func (s asyncSearchSharder) RoundTrip(pipelineRequest pipeline.Request) (pipeline.Responses[combiner.PipelineResponse], error) {
 	r := pipelineRequest.HTTPRequest()
 
-	searchReq, err := api.ParseSearchRequest(r) // jpe - could parse and pass search request in the searchRequest struct
-	if err != nil {
-		return pipeline.NewBadRequest(err), nil
-	}
+	shardedSearchReq := pipelineRequest.(*shardedSearchRequest)
 
-	shardedSearchReq := pipelineRequest.(*shardedSearchRequest) // jpe fall back to old behavior?
-
-	// adjust limit based on config
-	searchReq.Limit, err = adjustLimit(searchReq.Limit, s.cfg.DefaultLimit, s.cfg.MaxLimit)
-	if err != nil {
-		return pipeline.NewBadRequest(err), nil
-	}
+	// jpe all of this goes into the time range sharder?
+	searchReq := shardedSearchReq.parsedRequest
 
 	requestCtx := r.Context()
 	tenantID, err := user.ExtractOrgID(requestCtx)
@@ -85,20 +74,16 @@ func (s asyncSearchSharder) RoundTrip(pipelineRequest pipeline.Request) (pipelin
 	span, ctx := opentracing.StartSpanFromContext(requestCtx, "frontend.ShardSearch")
 	defer span.Finish()
 
-	// calculate and enforce max search duration
-	maxDuration := s.maxDuration(tenantID)
-	if maxDuration != 0 && time.Duration(searchReq.End-searchReq.Start)*time.Second > maxDuration {
-		return pipeline.NewBadRequest(fmt.Errorf("range specified by start and end exceeds %s. received start=%d end=%d", maxDuration, searchReq.Start, searchReq.End)), nil
-	}
-
 	// buffer of shards+1 allows us to insert ingestReq and metrics
 	reqCh := make(chan pipeline.Request, s.cfg.IngesterShards+1)
 
-	// build request to search ingesters based on query_ingesters_until config and time range
-	// pass subCtx in requests so we can cancel and exit early
-	err = s.ingesterRequests(ctx, tenantID, r, *searchReq, reqCh) // jpe - need to pass shard start/end not request start/end
-	if err != nil {
-		return nil, err
+	if shardedSearchReq.ingesterRequests {
+		// build request to search ingesters based on query_ingesters_until config and time range
+		// pass subCtx in requests so we can cancel and exit early
+		err = s.ingesterRequests(ctx, tenantID, r, *searchReq, reqCh) // jpe - need to pass shard start/end not request start/end
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Check the number of requests that were were written to the request channel
@@ -251,17 +236,6 @@ func (s *asyncSearchSharder) ingesterRequests(ctx context.Context, tenantID stri
 	}
 
 	return nil
-}
-
-// maxDuration returns the max search duration allowed for this tenant.
-func (s *asyncSearchSharder) maxDuration(tenantID string) time.Duration {
-	// check overrides first, if no overrides then grab from our config
-	maxDuration := s.overrides.MaxSearchDuration(tenantID)
-	if maxDuration != 0 {
-		return maxDuration
-	}
-
-	return s.cfg.MaxDuration
 }
 
 // backendRange returns a new start/end range for the backend based on the config parameter

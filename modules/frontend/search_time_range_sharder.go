@@ -1,8 +1,13 @@
 package frontend
 
 import (
+	"fmt"
+	"time"
+
+	"github.com/grafana/dskit/user"
 	"github.com/grafana/tempo/modules/frontend/combiner"
 	"github.com/grafana/tempo/modules/frontend/pipeline"
+	"github.com/grafana/tempo/modules/overrides"
 	"github.com/grafana/tempo/pkg/api"
 	"github.com/grafana/tempo/pkg/tempopb"
 	"github.com/grafana/tempo/tempodb"
@@ -51,30 +56,36 @@ const shardDuration = 3600
 type shardedSearchRequest struct {
 	pipeline.Request
 
-	parsedRequest *tempopb.SearchRequest
-	blocks        []*backend.BlockMeta
+	parsedRequest    *tempopb.SearchRequest
+	blocks           []*backend.BlockMeta
+	ingesterRequests bool
 }
 
 // jpe - not technically necessary anymore?
 func (s *shardedSearchRequest) Clone() pipeline.Request {
 	return &shardedSearchRequest{
-		Request:       s.Request.Clone(),
-		parsedRequest: s.parsedRequest,
-		blocks:        s.blocks,
+		Request:          s.Request.Clone(),
+		parsedRequest:    s.parsedRequest,
+		blocks:           s.blocks,
+		ingesterRequests: s.ingesterRequests,
 	}
 }
 
 type asyncTimeRangeSearchSharder struct {
-	next   pipeline.AsyncRoundTripper[combiner.PipelineResponse]
-	reader tempodb.Reader
+	next      pipeline.AsyncRoundTripper[combiner.PipelineResponse]
+	reader    tempodb.Reader
+	cfg       SearchSharderConfig
+	overrides overrides.Interface
 }
 
 // newTimeRangeSearchSharder creates 1 hour time ranges working backwards from the end of the range
-func newAsyncTimeRangeSearchSharder(reader tempodb.Reader) pipeline.AsyncMiddleware[combiner.PipelineResponse] {
+func newAsyncTimeRangeSearchSharder(reader tempodb.Reader, o overrides.Interface, cfg SearchSharderConfig) pipeline.AsyncMiddleware[combiner.PipelineResponse] {
 	return pipeline.AsyncMiddlewareFunc[combiner.PipelineResponse](func(next pipeline.AsyncRoundTripper[combiner.PipelineResponse]) pipeline.AsyncRoundTripper[combiner.PipelineResponse] {
 		return asyncTimeRangeSearchSharder{
-			next:   next,
-			reader: reader,
+			next:      next,
+			reader:    reader,
+			cfg:       cfg,
+			overrides: o,
 		}
 	})
 }
@@ -83,40 +94,73 @@ func (s asyncTimeRangeSearchSharder) RoundTrip(pipelineRequest pipeline.Request)
 	// jpe - defer cancel context? technically the collector above will ...
 	//       handle failed context?
 	r := pipelineRequest.HTTPRequest()
+	ctx := pipelineRequest.Context()
+
+	tenantID, err := user.ExtractOrgID(ctx)
+	if err != nil {
+		return pipeline.NewBadRequest(err), nil
+	}
 
 	searchReq, err := api.ParseSearchRequest(r)
 	if err != nil {
 		return pipeline.NewBadRequest(err), nil
 	}
 
+	// adjust limit based on config
+	searchReq.Limit, err = adjustLimit(searchReq.Limit, s.cfg.DefaultLimit, s.cfg.MaxLimit)
+	if err != nil {
+		return pipeline.NewBadRequest(err), nil
+	}
+
+	// calculate and enforce max search duration
+	maxDuration := s.maxDuration(tenantID)
+	if maxDuration != 0 && time.Duration(searchReq.End-searchReq.Start)*time.Second > maxDuration {
+		return pipeline.NewBadRequest(fmt.Errorf("range specified by start and end exceeds %s. received start=%d end=%d", maxDuration, searchReq.Start, searchReq.End)), nil
+	}
+
 	// if the start and end are 0 then we are searching ingesters only and the time sharding doesn't matter,
 	// just pass to the next middleware
-	shards := shardTotal(searchReq.Start, searchReq.End)
-	if shards == 0 {
+	if searchReq.End == 0 && searchReq.Start == 0 {
 		return s.next.RoundTrip(&shardedSearchRequest{ // jpe to pointer or not to pointer
-			Request:       pipelineRequest,
-			parsedRequest: searchReq,
-			blocks:        nil,
+			Request:          pipelineRequest,
+			parsedRequest:    searchReq,
+			blocks:           nil,
+			ingesterRequests: true,
 		})
 	}
+
+	// metas are returned in reverse order by end time
+	metas := s.reader.BlockMetas(tenantID)
+	metas = s.blockMetas(metas, searchReq.Start, searchReq.End)
+
+	// jpe calc and send total jobs, etc off of the block metas
 
 	asyncResponseSender := pipeline.NewAsyncResponseSender()
 
 	go func() {
 		defer asyncResponseSender.SendComplete()
 
-		for i := 0; i < shards; i++ {
-			start, end := shardStartEnd(i, searchReq.Start, searchReq.End)
+		ingesterRequests := true // jpe - not necessarily. needs to be based on whether the time range overlaps the ingester range
+
+		for len(metas) > 0 {
+			blocksPerShard := 10 // jpe - const
+			if len(metas) < blocksPerShard {
+				blocksPerShard = len(metas)
+			}
+			shardMetas := metas[:blocksPerShard]
 
 			resps, err := s.next.RoundTrip(&shardedSearchRequest{ // jpe to pointer or not to pointer
-				Request:    pipelineRequest,
-				shardStart: start,
-				shardEnd:   end,
+				Request:          pipelineRequest,
+				parsedRequest:    searchReq,
+				blocks:           shardMetas,
+				ingesterRequests: ingesterRequests,
 			})
 			if err != nil {
 				asyncResponseSender.SendError(err)
 				return
 			}
+
+			ingesterRequests = false
 
 			for {
 				resp, done, err := resps.Next(r.Context())
@@ -136,9 +180,12 @@ func (s asyncTimeRangeSearchSharder) RoundTrip(pipelineRequest pipeline.Request)
 				}
 			}
 
-			// send a completion marker to the combiner
+			// we've now sent to the combiner all of the potential results from now through the end of the final block we searched
+			// send that end time to the combiner so it can track progress
+			end := uint32(shardMetas[0].EndTime.Unix())
+
 			asyncResponseSender.Send(r.Context(), pipeline.NewAsyncResponse(&combiner.ShardCompletionResponse{
-				CompletedThrough: end, // jpe - start?
+				CompletedThrough: end,
 			}))
 		}
 	}()
@@ -147,18 +194,19 @@ func (s asyncTimeRangeSearchSharder) RoundTrip(pipelineRequest pipeline.Request)
 }
 
 // blockMetas returns all relevant blockMetas given a start/end
-func (s *asyncTimeRangeSearchSharder) blockMetas(start, end int64, inclusiveEnd bool, tenantID string) []*backend.BlockMeta {
-	// reduce metas to those in the requested range
-	allMetas := s.reader.BlockMetas(tenantID)                // jpe - add a filter func to copy slices less
-	metas := make([]*backend.BlockMeta, 0, len(allMetas)/50) // divide by 50 for luck // jpe - add a filter func? which would allow for less copying of slices?
-	for _, m := range allMetas {
+func (s *asyncTimeRangeSearchSharder) blockMetas(metas []*backend.BlockMeta, start, end uint32) []*backend.BlockMeta {
+	// subslice metas to those in the requested range
+	retMetas := make([]*backend.BlockMeta, 0, len(metas)/100) // 50 for luck
+
+	// reduce metas to those in the requested range.
+	for _, m := range metas {
 		if m.ReplicationFactor != backend.DefaultReplicationFactor { // This check skips generator blocks (RF=1)
 			continue
 		}
 
 		// blocks completely outside the bounds
-		blockStart := m.StartTime.Unix()
-		blockEnd := m.EndTime.Unix()
+		blockStart := uint32(m.StartTime.Unix())
+		blockEnd := uint32(m.EndTime.Unix())
 		if blockStart > end {
 			continue
 		}
@@ -166,56 +214,19 @@ func (s *asyncTimeRangeSearchSharder) blockMetas(start, end int64, inclusiveEnd 
 			continue
 		}
 
-		// straddles the end of the requested range. only include if inclusiveEnd is true
-		if blockEnd > end && blockStart < end && !inclusiveEnd { // jpe - can a block be included 2x?
-			continue
-		}
-
-		metas = append(metas, m)
+		retMetas = append(retMetas, m)
 	}
 
-	return metas
+	return retMetas
 }
 
-// shardTotal returns the number of shards between start and end
-func shardTotal(start, end uint32) int {
-	if start >= end {
-		return 0
+// maxDuration returns the max search duration allowed for this tenant.
+func (s *asyncTimeRangeSearchSharder) maxDuration(tenantID string) time.Duration {
+	// check overrides first, if no overrides then grab from our config
+	maxDuration := s.overrides.MaxSearchDuration(tenantID)
+	if maxDuration != 0 {
+		return maxDuration
 	}
 
-	totalRange := end - start
-	shards := int(totalRange / shardDuration)
-
-	if totalRange%shardDuration != 0 {
-		shards++
-	}
-	return shards
-}
-
-// jpe - shard end matches previous shard start, does this need to be adjusted?
-func shardStartEnd(shard int, rangeStart, rangeEnd uint32) (uint32, uint32) {
-	// invalid range
-	if rangeStart >= rangeEnd {
-		return 0, 0
-	}
-
-	// invalid shard
-	if uint32(shard*shardDuration) > rangeEnd {
-		return 0, 0
-	}
-
-	shardStart := rangeEnd - uint32((shard+1)*shardDuration)
-	shardEnd := rangeEnd - uint32(shard*shardDuration)
-
-	// underflow protection
-	if shardStart > shardEnd {
-		shardStart = 0
-	}
-
-	// don't go past the start of the range
-	if shardStart < rangeStart {
-		shardStart = rangeStart
-	}
-
-	return shardStart, shardEnd
+	return s.cfg.MaxDuration
 }
