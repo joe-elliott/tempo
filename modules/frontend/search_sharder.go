@@ -18,7 +18,6 @@ import (
 	"github.com/grafana/tempo/pkg/api"
 	"github.com/grafana/tempo/pkg/tempopb"
 	"github.com/grafana/tempo/pkg/traceql"
-	"github.com/grafana/tempo/tempodb"
 	"github.com/grafana/tempo/tempodb/backend"
 )
 
@@ -40,7 +39,6 @@ type SearchSharderConfig struct {
 
 type asyncSearchSharder struct {
 	next      pipeline.AsyncRoundTripper[combiner.PipelineResponse]
-	reader    tempodb.Reader
 	overrides overrides.Interface
 
 	cfg    SearchSharderConfig
@@ -48,11 +46,10 @@ type asyncSearchSharder struct {
 }
 
 // newAsyncSearchSharder creates a sharding middleware for search
-func newAsyncSearchSharder(reader tempodb.Reader, o overrides.Interface, cfg SearchSharderConfig, logger log.Logger) pipeline.AsyncMiddleware[combiner.PipelineResponse] {
+func newAsyncSearchSharder(o overrides.Interface, cfg SearchSharderConfig, logger log.Logger) pipeline.AsyncMiddleware[combiner.PipelineResponse] {
 	return pipeline.AsyncMiddlewareFunc[combiner.PipelineResponse](func(next pipeline.AsyncRoundTripper[combiner.PipelineResponse]) pipeline.AsyncRoundTripper[combiner.PipelineResponse] {
 		return asyncSearchSharder{
 			next:      next,
-			reader:    reader,
 			overrides: o,
 
 			cfg:    cfg,
@@ -137,37 +134,6 @@ func (s asyncSearchSharder) RoundTrip(pipelineRequest pipeline.Request) (pipelin
 
 	// execute requests
 	return pipeline.NewAsyncSharderChan(ctx, s.cfg.ConcurrentRequests, reqCh, jobMetricsResponse, s.next), nil
-}
-
-// blockMetas returns all relevant blockMetas given a start/end
-func (s *asyncSearchSharder) blockMetas(start, end int64, inclusiveEnd bool, tenantID string) []*backend.BlockMeta {
-	// reduce metas to those in the requested range
-	allMetas := s.reader.BlockMetas(tenantID)
-	metas := make([]*backend.BlockMeta, 0, len(allMetas)/50) // divide by 50 for luck // jpe - add a filter func? which would allow for less copying of slices?
-	for _, m := range allMetas {
-		if m.ReplicationFactor != backend.DefaultReplicationFactor { // This check skips generator blocks (RF=1)
-			continue
-		}
-
-		// blocks completely outside the bounds
-		blockStart := m.StartTime.Unix()
-		blockEnd := m.EndTime.Unix()
-		if blockStart > end {
-			continue
-		}
-		if blockEnd < start {
-			continue
-		}
-
-		// straddles the end of the requested range. only include if inclusiveEnd is true
-		if blockEnd > end && blockStart < end && !inclusiveEnd { // jpe - can a block be included 2x?
-			continue
-		}
-
-		metas = append(metas, m)
-	}
-
-	return metas
 }
 
 // backendRequest builds backend requests to search backend blocks. backendRequest takes ownership of reqCh and closes it.

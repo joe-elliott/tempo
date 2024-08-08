@@ -102,9 +102,9 @@ func New(cfg Config, next http.RoundTripper, o overrides.Interface, reader tempo
 
 	searchPipeline := pipeline.Build(
 		[]pipeline.AsyncMiddleware[combiner.PipelineResponse]{
-			newAsyncTimeRangeSearchSharder(),
+			newAsyncTimeRangeSearchSharder(reader),
 			multiTenantMiddleware(cfg, logger),
-			newAsyncSearchSharder(reader, o, cfg.Search.Sharder, logger),
+			newAsyncSearchSharder(o, cfg.Search.Sharder, logger),
 		},
 		[]pipeline.Middleware{cacheWare, statusCodeWare, retryWare},
 		next)

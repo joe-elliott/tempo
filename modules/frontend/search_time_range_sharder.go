@@ -4,6 +4,9 @@ import (
 	"github.com/grafana/tempo/modules/frontend/combiner"
 	"github.com/grafana/tempo/modules/frontend/pipeline"
 	"github.com/grafana/tempo/pkg/api"
+	"github.com/grafana/tempo/pkg/tempopb"
+	"github.com/grafana/tempo/tempodb"
+	"github.com/grafana/tempo/tempodb/backend"
 )
 
 // sharder that takes an interface? or functions to provide a generic way to shard a given query over
@@ -36,10 +39,9 @@ import (
 //  includes a slice of block metas to search this allows the time range sharder to
 //  correctly calculate the total number of jobs to send back to the combiner
 //  AND avoids bugs where the blocklist changes in between shards received
-// 1) pull block metas from the .reader with a new filter func
-// 2) sort them by end time? and send subslices to the next middleware?
-//    2a) already sorted by time. write test to pin this behavior and rely on it here
+// 1) pull block metas in a local var from the .reader with a new filter func
 // 3) don't break on start/end time shards. just send 100 at a time or something simple.
+//   4) subslice the block metas instead of alloc'ing new
 
 // jpe
 //  start a cross tenant limitations doc? include the fact that multitenant is not guaranteed to return the most recent traces
@@ -49,27 +51,30 @@ const shardDuration = 3600
 type shardedSearchRequest struct {
 	pipeline.Request
 
-	shardStart uint32
-	shardEnd   uint32
+	parsedRequest *tempopb.SearchRequest
+	blocks        []*backend.BlockMeta
 }
 
+// jpe - not technically necessary anymore?
 func (s *shardedSearchRequest) Clone() pipeline.Request {
 	return &shardedSearchRequest{
-		Request:    s.Request.Clone(),
-		shardStart: s.shardStart,
-		shardEnd:   s.shardEnd,
+		Request:       s.Request.Clone(),
+		parsedRequest: s.parsedRequest,
+		blocks:        s.blocks,
 	}
 }
 
 type asyncTimeRangeSearchSharder struct {
-	next pipeline.AsyncRoundTripper[combiner.PipelineResponse]
+	next   pipeline.AsyncRoundTripper[combiner.PipelineResponse]
+	reader tempodb.Reader
 }
 
 // newTimeRangeSearchSharder creates 1 hour time ranges working backwards from the end of the range
-func newAsyncTimeRangeSearchSharder() pipeline.AsyncMiddleware[combiner.PipelineResponse] {
+func newAsyncTimeRangeSearchSharder(reader tempodb.Reader) pipeline.AsyncMiddleware[combiner.PipelineResponse] {
 	return pipeline.AsyncMiddlewareFunc[combiner.PipelineResponse](func(next pipeline.AsyncRoundTripper[combiner.PipelineResponse]) pipeline.AsyncRoundTripper[combiner.PipelineResponse] {
 		return asyncTimeRangeSearchSharder{
-			next: next,
+			next:   next,
+			reader: reader,
 		}
 	})
 }
@@ -89,9 +94,9 @@ func (s asyncTimeRangeSearchSharder) RoundTrip(pipelineRequest pipeline.Request)
 	shards := shardTotal(searchReq.Start, searchReq.End)
 	if shards == 0 {
 		return s.next.RoundTrip(&shardedSearchRequest{ // jpe to pointer or not to pointer
-			Request:    pipelineRequest,
-			shardStart: 0,
-			shardEnd:   0,
+			Request:       pipelineRequest,
+			parsedRequest: searchReq,
+			blocks:        nil,
 		})
 	}
 
@@ -139,6 +144,37 @@ func (s asyncTimeRangeSearchSharder) RoundTrip(pipelineRequest pipeline.Request)
 	}()
 
 	return asyncResponseSender, nil
+}
+
+// blockMetas returns all relevant blockMetas given a start/end
+func (s *asyncTimeRangeSearchSharder) blockMetas(start, end int64, inclusiveEnd bool, tenantID string) []*backend.BlockMeta {
+	// reduce metas to those in the requested range
+	allMetas := s.reader.BlockMetas(tenantID)                // jpe - add a filter func to copy slices less
+	metas := make([]*backend.BlockMeta, 0, len(allMetas)/50) // divide by 50 for luck // jpe - add a filter func? which would allow for less copying of slices?
+	for _, m := range allMetas {
+		if m.ReplicationFactor != backend.DefaultReplicationFactor { // This check skips generator blocks (RF=1)
+			continue
+		}
+
+		// blocks completely outside the bounds
+		blockStart := m.StartTime.Unix()
+		blockEnd := m.EndTime.Unix()
+		if blockStart > end {
+			continue
+		}
+		if blockEnd < start {
+			continue
+		}
+
+		// straddles the end of the requested range. only include if inclusiveEnd is true
+		if blockEnd > end && blockStart < end && !inclusiveEnd { // jpe - can a block be included 2x?
+			continue
+		}
+
+		metas = append(metas, m)
+	}
+
+	return metas
 }
 
 // shardTotal returns the number of shards between start and end
