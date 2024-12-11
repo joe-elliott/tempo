@@ -69,9 +69,8 @@ type Processor struct {
 
 	flushqueue *flushqueues.PriorityQueue
 
-	liveTracesMtx sync.Mutex
-	liveTraces    *liveTraces[*v1.ResourceSpans]
-	traceSizes    *tracesizes.Tracker
+	liveTraces *liveTraces[*v1.ResourceSpans]
+	traceSizes *tracesizes.Tracker
 
 	writer tempodb.Writer
 }
@@ -135,9 +134,6 @@ func (*Processor) Name() string {
 }
 
 func (p *Processor) PushSpans(_ context.Context, req *tempopb.PushSpansRequest) {
-	p.liveTracesMtx.Lock()
-	defer p.liveTracesMtx.Unlock()
-
 	before := p.liveTraces.Len()
 
 	maxSz := p.overrides.MaxBytesPerTrace(p.tenant)
@@ -177,7 +173,7 @@ func (p *Processor) PushSpans(_ context.Context, req *tempopb.PushSpansRequest) 
 
 	}
 
-	after := p.liveTraces.Len()
+	after := p.liveTraces.Len() // jpe - return length of live traces from .Push?
 
 	// Number of new traces is the delta
 	metricTotalTraces.WithLabelValues(p.tenant).Add(float64(after - before))
@@ -594,16 +590,12 @@ func (p *Processor) deleteOldBlocks() (err error) {
 }
 
 func (p *Processor) cutIdleTraces(immediate bool) error {
-	p.liveTracesMtx.Lock()
-
 	// Record live traces before flushing so we know the high water mark
-	metricLiveTraces.WithLabelValues(p.tenant).Set(float64(len(p.liveTraces.traces)))
+	metricLiveTraces.WithLabelValues(p.tenant).Set(float64(p.liveTraces.Len())) // jpe - combine both len and size into one func?
 	metricLiveTraceBytes.WithLabelValues(p.tenant).Set(float64(p.liveTraces.Size()))
 
 	since := time.Now().Add(-p.Cfg.TraceIdlePeriod)
 	tracesToCut := p.liveTraces.CutIdle(since, immediate)
-
-	p.liveTracesMtx.Unlock()
 
 	if len(tracesToCut) == 0 {
 		return nil
