@@ -70,7 +70,7 @@ type Processor struct {
 	flushqueue *flushqueues.PriorityQueue
 
 	liveTracesMtx sync.Mutex
-	liveTraces    *liveTraces
+	liveTraces    *liveTraces[*v1.ResourceSpans]
 	traceSizes    *tracesizes.Tracker
 
 	writer tempodb.Writer
@@ -103,7 +103,7 @@ func New(cfg Config, tenant string, wal *wal.WAL, writer tempodb.Writer, overrid
 		walBlocks:      map[uuid.UUID]common.WALBlock{},
 		completeBlocks: map[uuid.UUID]*ingester.LocalBlock{},
 		flushqueue:     flushqueues.NewPriorityQueue(metricFlushQueueSize.WithLabelValues(tenant)),
-		liveTraces:     newLiveTraces(),
+		liveTraces:     newLiveTraces[*v1.ResourceSpans](),
 		traceSizes:     tracesizes.New(),
 		closeCh:        make(chan struct{}),
 		wg:             sync.WaitGroup{},

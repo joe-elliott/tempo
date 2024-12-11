@@ -5,12 +5,13 @@ import (
 	"testing"
 	"time"
 
+	v1 "github.com/grafana/tempo/pkg/tempopb/trace/v1"
 	"github.com/grafana/tempo/pkg/util/test"
 	"github.com/stretchr/testify/require"
 )
 
 func TestLiveTracesSizesAndLen(t *testing.T) {
-	lt := newLiveTraces()
+	lt := newLiveTraces[*v1.ResourceSpans]()
 
 	expectedSz := uint64(0)
 	expectedLen := uint64(0)

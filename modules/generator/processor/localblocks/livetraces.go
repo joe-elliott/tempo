@@ -4,47 +4,49 @@ import (
 	"hash"
 	"hash/fnv"
 	"time"
-
-	v1 "github.com/grafana/tempo/pkg/tempopb/trace/v1"
 )
 
-type liveTrace struct {
+type sizer interface {
+	Size() int
+}
+
+type liveTrace[T sizer] struct {
 	id        []byte
 	timestamp time.Time
-	Batches   []*v1.ResourceSpans
+	Batches   []T
 
 	sz uint64
 }
 
-type liveTraces struct {
+type liveTraces[T sizer] struct {
 	hash   hash.Hash64
-	traces map[uint64]*liveTrace
+	traces map[uint64]*liveTrace[T]
 
 	sz uint64
 }
 
-func newLiveTraces() *liveTraces {
-	return &liveTraces{
+func newLiveTraces[T sizer]() *liveTraces[T] {
+	return &liveTraces[T]{
 		hash:   fnv.New64(),
-		traces: make(map[uint64]*liveTrace),
+		traces: make(map[uint64]*liveTrace[T]),
 	}
 }
 
-func (l *liveTraces) token(traceID []byte) uint64 {
+func (l *liveTraces[T]) token(traceID []byte) uint64 {
 	l.hash.Reset()
 	l.hash.Write(traceID)
 	return l.hash.Sum64()
 }
 
-func (l *liveTraces) Len() uint64 {
+func (l *liveTraces[T]) Len() uint64 {
 	return uint64(len(l.traces))
 }
 
-func (l *liveTraces) Size() uint64 {
+func (l *liveTraces[T]) Size() uint64 {
 	return l.sz
 }
 
-func (l *liveTraces) Push(traceID []byte, batch *v1.ResourceSpans, max uint64) bool {
+func (l *liveTraces[T]) Push(traceID []byte, batch T, max uint64) bool {
 	token := l.token(traceID)
 
 	tr := l.traces[token]
@@ -56,7 +58,7 @@ func (l *liveTraces) Push(traceID []byte, batch *v1.ResourceSpans, max uint64) b
 			return false
 		}
 
-		tr = &liveTrace{
+		tr = &liveTrace[T]{
 			id: traceID,
 		}
 		l.traces[token] = tr
@@ -71,8 +73,8 @@ func (l *liveTraces) Push(traceID []byte, batch *v1.ResourceSpans, max uint64) b
 	return true
 }
 
-func (l *liveTraces) CutIdle(idleSince time.Time, immediate bool) []*liveTrace {
-	res := []*liveTrace{}
+func (l *liveTraces[T]) CutIdle(idleSince time.Time, immediate bool) []*liveTrace[T] {
+	res := []*liveTrace[T]{}
 
 	for k, tr := range l.traces {
 		if tr.timestamp.Before(idleSince) || immediate {
