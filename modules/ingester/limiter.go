@@ -36,7 +36,7 @@ func NewLimiter(limits overrides.Interface, ring RingCount, replicationFactor in
 
 // AssertMaxTracesPerUser ensures limit has not been reached compared to the current
 // number of streams in input and returns an error if so.
-func (l *Limiter) AssertMaxTracesPerUser(userID string, traces int) error {
+func (l *Limiter) AssertMaxTracesPerUser(userID string, traces int) error { // jpe remove?
 	actualLimit := l.maxTracesPerUser(userID)
 	if traces < actualLimit {
 		return nil

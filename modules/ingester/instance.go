@@ -6,8 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"hash"
-	"hash/fnv"
+	"math"
 	"sort"
 	"sync"
 	"time"
@@ -21,6 +20,7 @@ import (
 	"google.golang.org/grpc/codes"
 
 	"github.com/grafana/tempo/modules/overrides"
+	"github.com/grafana/tempo/pkg/livetraces"
 	"github.com/grafana/tempo/pkg/model"
 	"github.com/grafana/tempo/pkg/model/trace"
 	"github.com/grafana/tempo/pkg/tempopb"
@@ -77,11 +77,15 @@ var (
 	}, []string{"tenant"})
 )
 
+type batch []byte
+
+func (b batch) Size() int {
+	return len(b)
+}
+
 type instance struct {
-	tracesMtx      sync.Mutex
-	traces         map[uint32]*liveTrace
-	traceSizes     *tracesizes.Tracker
-	traceSizeBytes uint64
+	traces     *livetraces.Tracker[batch]
+	traceSizes *tracesizes.Tracker
 
 	headBlockMtx sync.RWMutex
 	headBlock    common.WALBlock
@@ -105,8 +109,6 @@ type instance struct {
 	localReader backend.Reader
 	localWriter backend.Writer
 
-	hash hash.Hash32
-
 	logger         kitlog.Logger
 	maxTraceLogger *log.RateLimitedLogger
 }
@@ -115,7 +117,7 @@ func newInstance(instanceID string, limiter *Limiter, overrides ingesterOverride
 	logger := kitlog.With(log.Logger, "tenant", instanceID)
 
 	i := &instance{
-		traces:     map[uint32]*liveTrace{},
+		traces:     livetraces.New[batch](),
 		traceSizes: tracesizes.New(),
 
 		instanceID:         instanceID,
@@ -130,8 +132,6 @@ func newInstance(instanceID string, limiter *Limiter, overrides ingesterOverride
 		local:       l,
 		localReader: backend.NewReader(l),
 		localWriter: backend.NewWriter(l),
-
-		hash: fnv.New32(),
 
 		logger:         logger,
 		maxTraceLogger: log.NewRateLimitedLogger(maxTraceLogLinesPerSecond, level.Warn(logger)),
@@ -198,14 +198,6 @@ func (i *instance) PushBytes(ctx context.Context, id, traceBytes []byte) error {
 }
 
 func (i *instance) push(ctx context.Context, id, traceBytes []byte) error {
-	i.tracesMtx.Lock()
-	defer i.tracesMtx.Unlock()
-
-	err := i.limiter.AssertMaxTracesPerUser(i.instanceID, len(i.traces))
-	if err != nil {
-		return errMaxLiveTraces
-	}
-
 	maxBytes := i.limiter.limits.MaxBytesPerTrace(i.instanceID)
 	reqSize := len(traceBytes)
 
@@ -214,15 +206,10 @@ func (i *instance) push(ctx context.Context, id, traceBytes []byte) error {
 		return errTraceTooLarge
 	}
 
-	tkn := i.tokenForTraceID(id)
-	trace := i.getOrCreateTrace(id, tkn)
-
-	err = trace.Push(ctx, i.instanceID, traceBytes)
-	if err != nil {
-		return err
+	maxLiveTraces := i.limiter.maxTracesPerUser(i.instanceID) // jpe does this do the same thing as the old behavior?
+	if !i.traces.Push(id, batch(traceBytes), uint64(maxLiveTraces)) {
+		return errMaxLiveTraces
 	}
-
-	i.traceSizeBytes += uint64(reqSize)
 
 	return nil
 }
@@ -241,26 +228,46 @@ func (i *instance) CutCompleteTraces(cutoff time.Duration, immediate bool) error
 
 	// Sort by ID
 	sort.Slice(tracesToCut, func(i, j int) bool {
-		return bytes.Compare(tracesToCut[i].traceID, tracesToCut[j].traceID) == -1
+		return bytes.Compare(tracesToCut[i].ID, tracesToCut[j].ID) == -1
 	})
 
 	for _, t := range tracesToCut {
-		// sort batches before cutting to reduce combinations during compaction
-		sortByteSlices(t.batches)
+		batches := bytesFromBatches(t.Batches)
 
-		out, err := segmentDecoder.ToObject(t.batches)
+		// sort batches before cutting to reduce combinations during compaction
+		sortByteSlices(batches)
+
+		minStart := uint32(0)
+		maxEnd := uint32(math.MaxUint32)
+		for _, batch := range batches {
+			start, end, err := segmentDecoder.FastRange(batch)
+			if err != nil {
+				continue // ignore
+			}
+
+			if start < minStart {
+				minStart = start
+			}
+			if end > maxEnd {
+				maxEnd = end
+			}
+		}
+
+		out, err := segmentDecoder.ToObject(batches)
 		if err != nil {
 			return err
 		}
 
-		err = i.writeTraceToHeadBlock(t.traceID, out, t.start, t.end)
+		// calculate start/end from all batches
+
+		err = i.writeTraceToHeadBlock(t.ID, out, minStart, maxEnd)
 		if err != nil {
 			return err
 		}
 
 		// return trace byte slices to be reused by proto marshalling
 		//  WARNING: can't reuse traceid's b/c the appender takes ownership of byte slices that are passed to it
-		tempopb.ReuseByteSlices(t.batches)
+		tempopb.ReuseByteSlices(batches) // jpe - does this work?
 	}
 
 	i.headBlockMtx.Lock()
@@ -411,15 +418,13 @@ func (i *instance) FindTraceByID(ctx context.Context, id []byte, allowPartialTra
 	var completeTrace *tempopb.Trace
 
 	// live traces
-	i.tracesMtx.Lock()
-	if liveTrace, ok := i.traces[i.tokenForTraceID(id)]; ok {
-		completeTrace, err = model.MustNewSegmentDecoder(model.CurrentEncoding).PrepareForRead(liveTrace.batches)
+	if liveTrace := i.traces.Lookup(id); liveTrace != nil {
+		batches := bytesFromBatches(liveTrace.Batches)
+		completeTrace, err = model.MustNewSegmentDecoder(model.CurrentEncoding).PrepareForRead(batches)
 		if err != nil {
-			i.tracesMtx.Unlock()
 			return nil, fmt.Errorf("unable to unmarshal liveTrace: %w", err)
 		}
 	}
-	i.tracesMtx.Unlock()
 
 	maxBytes := i.limiter.limits.MaxBytesPerTrace(i.instanceID)
 	searchOpts := common.DefaultSearchOptionsWithMaxBytes(maxBytes)
@@ -483,28 +488,6 @@ func (i *instance) AddCompletingBlock(b common.WALBlock) {
 	i.completingBlocks = append(i.completingBlocks, b)
 }
 
-// getOrCreateTrace will return a new trace object for the given request
-//
-//	It must be called under the i.tracesMtx lock
-func (i *instance) getOrCreateTrace(traceID []byte, fp uint32) *liveTrace {
-	trace, ok := i.traces[fp]
-	if ok {
-		return trace
-	}
-
-	trace = newTrace(traceID)
-	i.traces[fp] = trace
-
-	return trace
-}
-
-// tokenForTraceID hash trace ID, should be called under lock
-func (i *instance) tokenForTraceID(id []byte) uint32 {
-	i.hash.Reset()
-	_, _ = i.hash.Write(id)
-	return i.hash.Sum32()
-}
-
 // resetHeadBlock() should be called under lock
 func (i *instance) resetHeadBlock() error {
 	dedicatedColumns := i.getDedicatedColumns()
@@ -538,27 +521,14 @@ func (i *instance) getDedicatedColumns() backend.DedicatedColumns {
 	return i.dedicatedColumns
 }
 
-func (i *instance) tracesToCut(cutoff time.Duration, immediate bool) []*liveTrace {
-	i.tracesMtx.Lock()
-	defer i.tracesMtx.Unlock()
+func (i *instance) tracesToCut(cutoff time.Duration, immediate bool) []*livetraces.Trace[batch] {
 
 	// Set this before cutting to give a more accurate number.
-	metricLiveTraces.WithLabelValues(i.instanceID).Set(float64(len(i.traces)))
-	metricLiveTraceBytes.WithLabelValues(i.instanceID).Set(float64(i.traceSizeBytes))
+	metricLiveTraces.WithLabelValues(i.instanceID).Set(float64(i.traces.Len()))
+	metricLiveTraceBytes.WithLabelValues(i.instanceID).Set(float64(i.traces.Size()))
 
 	cutoffTime := time.Now().Add(cutoff)
-	tracesToCut := make([]*liveTrace, 0, len(i.traces))
-
-	for key, trace := range i.traces {
-		if cutoffTime.After(trace.lastAppend) || immediate {
-			tracesToCut = append(tracesToCut, trace)
-
-			// decrease live trace bytes
-			i.traceSizeBytes -= trace.Size()
-
-			delete(i.traces, key)
-		}
-	}
+	tracesToCut := i.traces.CutIdle(cutoffTime, immediate)
 
 	return tracesToCut
 }
@@ -663,4 +633,13 @@ func sortByteSlices(buffs [][]byte) {
 
 		return bytes.Compare(traceI, traceJ) == -1
 	})
+}
+
+// jpe - improve, unsafe cast work?
+func bytesFromBatches(b []batch) [][]byte {
+	res := make([][]byte, len(b))
+	for i, batch := range b {
+		res[i] = batch
+	}
+	return res
 }

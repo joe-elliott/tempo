@@ -114,3 +114,10 @@ func (l *Tracker[T]) CutIdle(idleSince time.Time, immediate bool) []*Trace[T] {
 
 	return res
 }
+
+func (l *Tracker[T]) Lookup(id []byte) *Trace[T] {
+	l.mtx.RLock()
+	defer l.mtx.RUnlock()
+
+	return l.traces[l.token(id)]
+}
