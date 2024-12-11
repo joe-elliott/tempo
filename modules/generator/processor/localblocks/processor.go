@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/grafana/tempo/modules/ingester"
 	"github.com/grafana/tempo/pkg/flushqueues"
+	"github.com/grafana/tempo/pkg/livetraces"
 	"github.com/grafana/tempo/pkg/tracesizes"
 	"github.com/grafana/tempo/tempodb"
 	"go.opentelemetry.io/otel"
@@ -69,7 +70,7 @@ type Processor struct {
 
 	flushqueue *flushqueues.PriorityQueue
 
-	liveTraces *liveTraces[*v1.ResourceSpans]
+	liveTraces *livetraces.Tracker[*v1.ResourceSpans]
 	traceSizes *tracesizes.Tracker
 
 	writer tempodb.Writer
@@ -102,7 +103,7 @@ func New(cfg Config, tenant string, wal *wal.WAL, writer tempodb.Writer, overrid
 		walBlocks:      map[uuid.UUID]common.WALBlock{},
 		completeBlocks: map[uuid.UUID]*ingester.LocalBlock{},
 		flushqueue:     flushqueues.NewPriorityQueue(metricFlushQueueSize.WithLabelValues(tenant)),
-		liveTraces:     newLiveTraces[*v1.ResourceSpans](),
+		liveTraces:     livetraces.New[*v1.ResourceSpans](),
 		traceSizes:     tracesizes.New(),
 		closeCh:        make(chan struct{}),
 		wg:             sync.WaitGroup{},
@@ -603,7 +604,7 @@ func (p *Processor) cutIdleTraces(immediate bool) error {
 
 	// Sort by ID
 	sort.Slice(tracesToCut, func(i, j int) bool {
-		return bytes.Compare(tracesToCut[i].id, tracesToCut[j].id) == -1
+		return bytes.Compare(tracesToCut[i].ID, tracesToCut[j].ID) == -1
 	})
 
 	for _, t := range tracesToCut {
@@ -612,7 +613,7 @@ func (p *Processor) cutIdleTraces(immediate bool) error {
 			ResourceSpans: t.Batches,
 		}
 
-		err := p.writeHeadBlock(t.id, tr)
+		err := p.writeHeadBlock(t.ID, tr)
 		if err != nil {
 			return err
 		}

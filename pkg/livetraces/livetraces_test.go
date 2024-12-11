@@ -1,4 +1,4 @@
-package localblocks
+package livetraces
 
 import (
 	"math/rand/v2"
@@ -11,7 +11,7 @@ import (
 )
 
 func TestLiveTracesSizesAndLen(t *testing.T) {
-	lt := newLiveTraces[*v1.ResourceSpans]()
+	lt := New[*v1.ResourceSpans]()
 
 	expectedSz := uint64(0)
 	expectedLen := uint64(0)

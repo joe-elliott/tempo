@@ -1,4 +1,4 @@
-package localblocks
+package livetraces
 
 import (
 	"hash"
@@ -7,56 +7,56 @@ import (
 	"time"
 )
 
-type sizer interface {
+type Sizer interface {
 	Size() int
 }
 
-type liveTrace[T sizer] struct {
-	id        []byte
+type Trace[T Sizer] struct {
+	ID        []byte
 	timestamp time.Time
 	Batches   []T
 
 	sz uint64
 }
 
-type liveTraces[T sizer] struct {
+type Tracker[T Sizer] struct {
 	hash   hash.Hash64
-	traces map[uint64]*liveTrace[T]
+	traces map[uint64]*Trace[T]
 
 	sz uint64
 
 	mtx sync.RWMutex
 }
 
-func newLiveTraces[T sizer]() *liveTraces[T] {
-	return &liveTraces[T]{
+func New[T Sizer]() *Tracker[T] {
+	return &Tracker[T]{
 		hash:   fnv.New64(),
-		traces: make(map[uint64]*liveTrace[T]),
+		traces: make(map[uint64]*Trace[T]),
 	}
 }
 
 // token must be called under lock
-func (l *liveTraces[T]) token(traceID []byte) uint64 {
+func (l *Tracker[T]) token(traceID []byte) uint64 {
 	l.hash.Reset()
 	l.hash.Write(traceID)
 	return l.hash.Sum64()
 }
 
-func (l *liveTraces[T]) Len() uint64 {
+func (l *Tracker[T]) Len() uint64 {
 	l.mtx.RLock()
 	defer l.mtx.RUnlock()
 
 	return uint64(len(l.traces))
 }
 
-func (l *liveTraces[T]) Size() uint64 {
+func (l *Tracker[T]) Size() uint64 {
 	l.mtx.RLock()
 	defer l.mtx.RUnlock()
 
 	return l.sz
 }
 
-func (l *liveTraces[T]) Push(traceID []byte, batch T, max uint64) bool {
+func (l *Tracker[T]) Push(traceID []byte, batch T, max uint64) bool {
 	l.mtx.RLock()
 	unlock := func() {
 		l.mtx.RUnlock()
@@ -80,8 +80,8 @@ func (l *liveTraces[T]) Push(traceID []byte, batch T, max uint64) bool {
 			l.mtx.Unlock()
 		}
 
-		tr = &liveTrace[T]{
-			id: traceID,
+		tr = &Trace[T]{
+			ID: traceID,
 		}
 		l.traces[token] = tr
 	}
@@ -98,11 +98,11 @@ func (l *liveTraces[T]) Push(traceID []byte, batch T, max uint64) bool {
 	return true
 }
 
-func (l *liveTraces[T]) CutIdle(idleSince time.Time, immediate bool) []*liveTrace[T] {
+func (l *Tracker[T]) CutIdle(idleSince time.Time, immediate bool) []*Trace[T] {
 	l.mtx.Lock()
 	defer l.mtx.Unlock()
 
-	res := []*liveTrace[T]{}
+	res := []*Trace[T]{}
 
 	for k, tr := range l.traces {
 		if tr.timestamp.Before(idleSince) || immediate {
