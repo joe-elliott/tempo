@@ -1,10 +1,10 @@
 package livetraces
 
 import (
-	"hash"
-	"hash/fnv"
 	"sync"
 	"time"
+
+	"github.com/segmentio/fasthash/fnv1a"
 )
 
 type Sizer interface {
@@ -20,7 +20,6 @@ type Trace[T Sizer] struct {
 }
 
 type Tracker[T Sizer] struct {
-	hash   hash.Hash64
 	traces map[uint64]*Trace[T]
 
 	sz uint64
@@ -30,16 +29,12 @@ type Tracker[T Sizer] struct {
 
 func New[T Sizer]() *Tracker[T] {
 	return &Tracker[T]{
-		hash:   fnv.New64(),
 		traces: make(map[uint64]*Trace[T]),
 	}
 }
 
-// token must be called under lock
 func (l *Tracker[T]) token(traceID []byte) uint64 {
-	l.hash.Reset()
-	l.hash.Write(traceID)
-	return l.hash.Sum64()
+	return fnv1a.HashBytes64(traceID)
 }
 
 func (l *Tracker[T]) Len() uint64 {
@@ -80,10 +75,15 @@ func (l *Tracker[T]) Push(traceID []byte, batch T, max uint64) bool {
 			l.mtx.Unlock()
 		}
 
-		tr = &Trace[T]{
-			ID: traceID,
+		// check again. during the exchange, another goroutine may have added the trace. it is also possible
+		// that we exceeded the max while exchanging locks, but it should only be minimally
+		tr = l.traces[token]
+		if tr == nil {
+			tr = &Trace[T]{
+				ID: traceID,
+			}
+			l.traces[token] = tr
 		}
-		l.traces[token] = tr
 	}
 
 	sz := uint64(batch.Size())
