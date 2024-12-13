@@ -24,7 +24,7 @@ type Tracker[T Sizer] struct {
 
 	sz uint64
 
-	mtx sync.RWMutex
+	mtx sync.Mutex
 }
 
 func New[T Sizer]() *Tracker[T] {
@@ -38,24 +38,22 @@ func (l *Tracker[T]) token(traceID []byte) uint64 {
 }
 
 func (l *Tracker[T]) Len() uint64 {
-	l.mtx.RLock()
-	defer l.mtx.RUnlock()
+	l.mtx.Lock()
+	defer l.mtx.Unlock()
 
 	return uint64(len(l.traces))
 }
 
 func (l *Tracker[T]) Size() uint64 {
-	l.mtx.RLock()
-	defer l.mtx.RUnlock()
+	l.mtx.Lock()
+	defer l.mtx.Unlock()
 
 	return l.sz
 }
 
 func (l *Tracker[T]) Push(traceID []byte, batch T, max uint64) bool {
-	l.mtx.RLock()
-	unlock := func() {
-		l.mtx.RUnlock()
-	}
+	l.mtx.Lock()
+	defer l.mtx.Unlock()
 
 	token := l.token(traceID)
 
@@ -64,26 +62,13 @@ func (l *Tracker[T]) Push(traceID []byte, batch T, max uint64) bool {
 		// Before adding this check against max
 		// Zero means no limit
 		if max > 0 && uint64(len(l.traces)) >= max {
-			unlock()
 			return false
 		}
 
-		// exchange read lock for write lock and overwrite unlock so we can unlock correctly
-		l.mtx.RUnlock()
-		l.mtx.Lock()
-		unlock = func() {
-			l.mtx.Unlock()
+		tr = &Trace[T]{
+			ID: traceID,
 		}
-
-		// check again. during the exchange, another goroutine may have added the trace. it is also possible
-		// that we exceeded the max while exchanging locks, but it should only be minimally
-		tr = l.traces[token]
-		if tr == nil {
-			tr = &Trace[T]{
-				ID: traceID,
-			}
-			l.traces[token] = tr
-		}
+		l.traces[token] = tr
 	}
 
 	sz := uint64(batch.Size())
@@ -93,12 +78,10 @@ func (l *Tracker[T]) Push(traceID []byte, batch T, max uint64) bool {
 	tr.Batches = append(tr.Batches, batch)
 	tr.timestamp = time.Now()
 
-	unlock()
-
 	return true
 }
 
-func (l *Tracker[T]) CutIdle(idleSince time.Time, immediate bool) []*Trace[T] {
+func (l *Tracker[T]) CutIdle(idleSince time.Time, immediate bool) []*Trace[T] { // jpe - can return length and size
 	l.mtx.Lock()
 	defer l.mtx.Unlock()
 
@@ -116,8 +99,8 @@ func (l *Tracker[T]) CutIdle(idleSince time.Time, immediate bool) []*Trace[T] {
 }
 
 func (l *Tracker[T]) Lookup(id []byte) *Trace[T] {
-	l.mtx.RLock()
-	defer l.mtx.RUnlock()
+	l.mtx.Lock()
+	defer l.mtx.Unlock()
 
 	return l.traces[l.token(id)]
 }

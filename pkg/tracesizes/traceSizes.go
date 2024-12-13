@@ -1,6 +1,7 @@
 package tracesizes
 
 import (
+	"hash"
 	"sync"
 	"time"
 
@@ -8,7 +9,8 @@ import (
 )
 
 type Tracker struct {
-	mtx   sync.RWMutex
+	mtx   sync.Mutex
+	hash  hash.Hash64
 	sizes map[uint64]*traceSize
 }
 
@@ -31,36 +33,21 @@ func (s *Tracker) token(traceID []byte) uint64 {
 // or equal to the max.  The historical total is kept alive and incremented even
 // if not allowed, so that long-running traces are cutoff as expected.
 func (s *Tracker) Allow(traceID []byte, sz, max int) bool {
-	s.mtx.RLock()
-	unlock := func() {
-		s.mtx.RUnlock()
-	}
+	s.mtx.Lock()
+	defer s.mtx.Unlock()
 
 	token := s.token(traceID)
 	tr := s.sizes[token]
 	if tr == nil {
-		// exchange locks
-		s.mtx.RUnlock()
-		s.mtx.Lock()
-		unlock = func() {
-			s.mtx.Unlock()
+		tr = &traceSize{
+			size: 0, // size added below
 		}
-
-		// check again. during the exchange, another goroutine may have added the trace
-		tr = s.sizes[token]
-		if tr == nil {
-			tr = &traceSize{
-				size: 0, // size added below
-			}
-
-			s.sizes[token] = tr
-		}
+		s.sizes[token] = tr
 	}
 
 	tr.timestamp = time.Now()
 	tr.size += sz
 
-	unlock()
 	return tr.size <= max
 }
 

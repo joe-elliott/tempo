@@ -10,6 +10,7 @@ import (
 	"sort"
 	"sync"
 	"time"
+	"unsafe"
 
 	kitlog "github.com/go-kit/log"
 	"github.com/go-kit/log/level"
@@ -635,11 +636,7 @@ func sortByteSlices(buffs [][]byte) {
 	})
 }
 
-// jpe - improve, unsafe cast work?
+// a batch is a []byte so this is fine
 func bytesFromBatches(b []batch) [][]byte {
-	res := make([][]byte, len(b))
-	for i, batch := range b {
-		res[i] = batch
-	}
-	return res
+	return *(*[][]byte)(unsafe.Pointer(&b))
 }
