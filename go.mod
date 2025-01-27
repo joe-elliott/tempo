@@ -33,7 +33,7 @@ require (
 	github.com/jsternberg/zap-logfmt v1.2.0
 	github.com/klauspost/compress v1.17.11
 	github.com/minio/minio-go/v7 v7.0.84
-	github.com/mitchellh/mapstructure v1.5.1-0.20231216201459-8508981c8b6c
+	github.com/mitchellh/mapstructure v1.5.1-0.20231216201459-8508981c8b6c // indirect
 	github.com/olekukonko/tablewriter v0.0.5
 	github.com/open-telemetry/opentelemetry-collector-contrib/pkg/translator/jaeger v0.118.0
 	github.com/opentracing-contrib/go-grpc v0.1.0
@@ -46,7 +46,7 @@ require (
 	github.com/prometheus/prometheus v0.54.1
 	github.com/prometheus/statsd_exporter v0.26.1
 	github.com/segmentio/fasthash v1.0.3
-	github.com/sony/gobreaker v0.4.1
+	github.com/sony/gobreaker v1.0.0
 	github.com/spf13/viper v1.19.0
 	github.com/stretchr/testify v1.10.0
 	github.com/uber-go/atomic v1.4.0
@@ -70,7 +70,7 @@ require (
 	go.uber.org/goleak v1.3.0
 	go.uber.org/multierr v1.11.0
 	go.uber.org/zap v1.27.0
-	golang.org/x/sync v0.10.0
+	golang.org/x/sync v0.10.0 // indirect
 	golang.org/x/time v0.9.0
 	google.golang.org/api v0.217.0
 	google.golang.org/grpc v1.69.4
@@ -124,7 +124,6 @@ require (
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.34.0
 	go.opentelemetry.io/proto/otlp v1.5.0
 	golang.org/x/net v0.34.0
-	golang.org/x/oauth2 v0.25.0
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250115164207-1a7da9e5054f
 )
 
@@ -359,6 +358,7 @@ require (
 	golang.org/x/crypto v0.32.0 // indirect
 	golang.org/x/exp v0.0.0-20241108190413-2d47ceb2692f // indirect
 	golang.org/x/mod v0.22.0 // indirect
+	golang.org/x/oauth2 v0.25.0 // indirect
 	golang.org/x/sys v0.29.0 // indirect
 	golang.org/x/text v0.21.0 // indirect
 	golang.org/x/tools v0.27.0 // indirect
