@@ -785,7 +785,9 @@ type SyncIterator struct {
 	rgsMin     []RowNumber
 	rgsMax     []RowNumber // Exclusive, row number of next one past the row group
 	readSize   int
-	filter     Predicate
+
+	filter   Predicate
+	feFilter *FloatEqualPredicate
 
 	// Status
 	span            trace.Span
@@ -848,9 +850,17 @@ func NewSyncIterator(ctx context.Context, rgs []pq.RowGroup, column int, columnN
 		readSize:   readSize,
 		rgsMin:     rgsMin,
 		rgsMax:     rgsMax,
-		filter:     filter,
 		curr:       EmptyRowNumber(),
 		at:         at,
+	}
+
+	// jpe
+	switch filter.(type) {
+	case FloatEqualPredicate:
+		pred := filter.(FloatEqualPredicate)
+		i.feFilter = &pred
+	default:
+		i.filter = filter
 	}
 
 	// Apply options
@@ -1118,6 +1128,12 @@ func (c *SyncIterator) next() (RowNumber, *pq.Value, error) {
 
 		if c.currPage == nil {
 			pg, err := c.currChunk.NextPage()
+
+			// jpe - try skipping pages if a page is all nulls
+			// if pg.NumNulls() == pg.NumRows() {
+			// 	continue
+			// }
+
 			if pg == nil || errors.Is(err, io.EOF) {
 				// This row group is exhausted
 				c.closeCurrRowGroup()
@@ -1156,28 +1172,42 @@ func (c *SyncIterator) next() (RowNumber, *pq.Value, error) {
 
 		// Consume current buffer until empty
 		for c.currBufN < len(c.currBuf) {
-			v := &c.currBuf[c.currBufN]
+			v := &c.currBuf[c.currBufN] // jpe - test if it's faster to just pass the struct value?
 
 			// Inspect all values to track the current row number,
 			// even if the value is filtered out next.
 			rep := v.RepetitionLevel()
 			def := v.DefinitionLevel()
-			c.curr.Next(rep, def)
+			c.curr.Next(rep, def) // jpe Next() is not inlined, but nextSlow is. find the middleground
 			c.currBufN++
 			c.currPageN++
 
-			if c.filter == nil {
+			// if c.filter == nil {
+			// 	return c.curr, v, nil
+			// }
+
+			// if v.IsNull() { // jpe - this should be faster!
+			// 	continue
+			// }
+
+			switch {
+			case c.feFilter != nil:
+				if !c.feFilter.KeepValue(*v) {
+					continue
+				}
+			case c.filter != nil:
+				if !c.filter.KeepValue(*v) {
+					continue
+				}
+			// all filters nil
+			default:
 				return c.curr, v, nil
 			}
 
-			if v.IsNull() {
-				continue
-			}
-
-			ptrV := *v
-			if !c.filter.KeepValue(ptrV) {
-				continue
-			}
+			// valV := *v                     // jpe - is this possibly faster?
+			// if !c.filter.KeepValue(valV) { // jpe - inline this by predicates generic
+			// 	continue
+			// }
 
 			return c.curr, v, nil
 		}
