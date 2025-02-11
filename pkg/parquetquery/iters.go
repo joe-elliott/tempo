@@ -1160,11 +1160,22 @@ func (c *SyncIterator) next() (RowNumber, *pq.Value, error) {
 
 			// Inspect all values to track the current row number,
 			// even if the value is filtered out next.
-			c.curr.Next(v.RepetitionLevel(), v.DefinitionLevel())
+			rep := v.RepetitionLevel()
+			def := v.DefinitionLevel()
+			c.curr.Next(rep, def)
 			c.currBufN++
 			c.currPageN++
 
-			if c.filter != nil && !c.filter.KeepValue(*v) {
+			if c.filter == nil {
+				return c.curr, v, nil
+			}
+
+			if v.IsNull() {
+				continue
+			}
+
+			ptrV := *v
+			if !c.filter.KeepValue(ptrV) {
 				continue
 			}
 
@@ -1293,7 +1304,7 @@ func NewColumnIterator(ctx context.Context, rgs []pq.RowGroup, column int, colum
 		rgs:      rgs,
 		col:      column,
 		colName:  columnName,
-		filter:   &InstrumentedPredicate{pred: filter},
+		filter:   &InstrumentedPredicate{Pred: filter},
 		selectAs: selectAs,
 		quit:     make(chan struct{}),
 		ch:       make(chan *columnIteratorBuffer, 1),
