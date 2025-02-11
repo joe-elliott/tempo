@@ -78,7 +78,7 @@ func EqualRowNumber(upToDefinitionLevel int, a, b RowNumber) bool {
 	return true
 }
 
-func truncateRowNumberSlow(definitionLevelToKeep int, t RowNumber) RowNumber {
+func truncateRowNumberSlow(definitionLevelToKeep int, t RowNumber) RowNumber { // jpe - review inlining of all funcs? include a CI step to detect if they are still inlined?
 	n := EmptyRowNumber()
 	for i := 0; i <= definitionLevelToKeep; i++ {
 		n[i] = t[i]
