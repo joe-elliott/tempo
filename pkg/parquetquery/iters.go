@@ -785,7 +785,11 @@ type SyncIterator struct {
 	rgsMin     []RowNumber
 	rgsMax     []RowNumber // Exclusive, row number of next one past the row group
 	readSize   int
-	filter     Predicate
+
+	filter   Predicate
+	seFilter *StringEqualPredicate
+	siFilter *StringInPredicate
+	reFilter *regexPredicate
 
 	// Status
 	span            trace.Span
@@ -853,6 +857,15 @@ func NewSyncIterator(ctx context.Context, rgs []pq.RowGroup, column int, columnN
 		at:         at,
 	}
 
+	// todo: extend jpe
+	if seFilter, ok := filter.(*StringEqualPredicate); ok {
+		i.seFilter = seFilter
+	} else if siFilter, ok := filter.(*StringInPredicate); ok {
+		i.siFilter = siFilter
+	} else if reFilter, ok := filter.(*regexPredicate); ok {
+		i.reFilter = reFilter
+	}
+
 	// Apply options
 	for _, opt := range opts {
 		opt(i)
@@ -866,7 +879,7 @@ func (c *SyncIterator) String() string {
 	if c.filter != nil {
 		filter = c.filter.String()
 	}
-	return fmt.Sprintf("SyncIterator: %s : %s", c.columnName, filter)
+	return fmt.Sprintf("SyncIterator: %s : %s", c.columnName, filter) // jpe - fix String()
 }
 
 func (c *SyncIterator) Next() (*IteratorResult, error) {
@@ -1164,9 +1177,28 @@ func (c *SyncIterator) next() (RowNumber, *pq.Value, error) {
 			c.currBufN++
 			c.currPageN++
 
-			if c.filter != nil && !c.filter.KeepValue(*v) {
-				continue
+			switch {
+			case c.seFilter != nil:
+				if !c.seFilter.KeepValue(*v) {
+					continue
+				}
+			case c.siFilter != nil:
+				if !c.siFilter.KeepValue(*v) {
+					continue
+				}
+			case c.reFilter != nil:
+				if !c.reFilter.KeepValue(*v) {
+					continue
+				}
+			case c.filter != nil:
+				if !c.filter.KeepValue(*v) {
+					continue
+				}
 			}
+
+			// if c.filter != nil && !c.filter.KeepValue(*v) {
+			// 	continue
+			// }
 
 			return c.curr, v, nil
 		}
