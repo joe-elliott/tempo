@@ -790,6 +790,7 @@ type SyncIterator struct {
 	seFilter *StringEqualPredicate
 	siFilter *StringInPredicate
 	reFilter *regexPredicate
+	ieFilter *IntEqualPredicate
 
 	// Status
 	span            trace.Span
@@ -858,12 +859,14 @@ func NewSyncIterator(ctx context.Context, rgs []pq.RowGroup, column int, columnN
 	}
 
 	// todo: extend jpe
-	if seFilter, ok := filter.(*StringEqualPredicate); ok {
-		i.seFilter = seFilter
+	if seFilter, ok := filter.(StringEqualPredicate); ok {
+		i.seFilter = &seFilter
 	} else if siFilter, ok := filter.(*StringInPredicate); ok {
 		i.siFilter = siFilter
 	} else if reFilter, ok := filter.(*regexPredicate); ok {
 		i.reFilter = reFilter
+	} else if ieFilter, ok := filter.(IntEqualPredicate); ok {
+		i.ieFilter = &ieFilter
 	}
 
 	// Apply options
@@ -1177,28 +1180,32 @@ func (c *SyncIterator) next() (RowNumber, *pq.Value, error) {
 			c.currBufN++
 			c.currPageN++
 
-			switch {
-			case c.seFilter != nil:
-				if !c.seFilter.KeepValue(*v) {
-					continue
-				}
-			case c.siFilter != nil:
-				if !c.siFilter.KeepValue(*v) {
-					continue
-				}
-			case c.reFilter != nil:
-				if !c.reFilter.KeepValue(*v) {
-					continue
-				}
-			case c.filter != nil:
-				if !c.filter.KeepValue(*v) {
-					continue
-				}
-			}
-
-			// if c.filter != nil && !c.filter.KeepValue(*v) {
-			// 	continue
+			// switch {
+			// case c.seFilter != nil:
+			// 	if !c.seFilter.KeepValue(*v) {
+			// 		continue
+			// 	}
+			// case c.siFilter != nil:
+			// 	if !c.siFilter.KeepValue(*v) {
+			// 		continue
+			// 	}
+			// case c.reFilter != nil:
+			// 	if !c.reFilter.KeepValue(*v) {
+			// 		continue
+			// 	}
+			// case c.ieFilter != nil:
+			// 	if !c.ieFilter.KeepValue(*v) {
+			// 		continue
+			// 	}
+			// case c.filter != nil:
+			// 	if !c.filter.KeepValue(*v) {
+			// 		continue
+			// 	}
 			// }
+
+			if c.filter != nil && !c.filter.KeepValue(*v) {
+				continue
+			}
 
 			return c.curr, v, nil
 		}
