@@ -18,6 +18,10 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+type NestedValuesReader interface {
+	ReadNestedValues(values []pq.Value) (n int, err error)
+}
+
 // RowNumber is the sequence of row numbers uniquely identifying a value
 // in a tree of nested columns, starting at the top-level and including
 // another row number for each level of nesting. -1 is a placeholder
@@ -366,20 +370,21 @@ type SyncIterator struct {
 	filter     Predicate
 
 	// Status
-	span            trace.Span
-	curr            RowNumber
-	currRowGroup    pq.RowGroup
-	currRowGroupMin RowNumber
-	currRowGroupMax RowNumber
-	currChunk       *ColumnChunkHelper
-	currPage        pq.Page
-	currPageMin     RowNumber
-	currPageMax     RowNumber
-	currValues      pq.ValueReader
-	currBuf         []pq.Value
-	currBufN        int
-	currPageN       int
-	at              IteratorResult // Current value pointed at by iterator. Returned by call Next and SeekTo, valid until next call.
+	span             trace.Span
+	curr             RowNumber
+	currRowGroup     pq.RowGroup
+	currRowGroupMin  RowNumber
+	currRowGroupMax  RowNumber
+	currChunk        *ColumnChunkHelper
+	currPage         pq.Page
+	currPageMin      RowNumber
+	currPageMax      RowNumber
+	currValues       pq.ValueReader
+	currNestedValues NestedValuesReader
+	currBuf          []pq.Value
+	currBufN         int
+	currPageN        int
+	at               IteratorResult // Current value pointed at by iterator. Returned by call Next and SeekTo, valid until next call.
 
 	maxDefinitionLevel int
 
@@ -669,7 +674,7 @@ func (c *SyncIterator) seekWithinPage(to RowNumber, definitionLevel int) {
 	pq.Release(c.currPage)
 	c.currPage = pg
 	c.currPageMin = c.curr
-	c.currValues = pg.Values()
+	c.setValues(pg.Values())
 	c.currPageN = 0
 	syncIteratorPoolPut(c.currBuf)
 	c.currBuf = nil
@@ -722,7 +727,16 @@ func (c *SyncIterator) next() (RowNumber, *pq.Value, error) {
 		}
 		if c.currBufN >= len(c.currBuf) || len(c.currBuf) == 0 {
 			c.currBuf = c.currBuf[:cap(c.currBuf)]
-			n, err := c.currValues.ReadValues(c.currBuf)
+
+			var n int
+			var err error
+
+			if c.currNestedValues != nil { // jpe - everything is terrible. clean up
+				n, err = c.currNestedValues.ReadNestedValues(c.currBuf)
+			} else {
+				n, err = c.currValues.ReadValues(c.currBuf)
+			}
+
 			if err != nil && !errors.Is(err, io.EOF) {
 				return EmptyRowNumber(), nil, err
 			}
@@ -739,9 +753,28 @@ func (c *SyncIterator) next() (RowNumber, *pq.Value, error) {
 		for c.currBufN < len(c.currBuf) {
 			v := &c.currBuf[c.currBufN]
 
+			var r, d byte
+
+			if c.currNestedValues != nil { // jpe - better check
+				// if currNestedValues is set advance c.curr AS LONG AS the the definition level DOES NOT equal c.definitionLevel. in this case the value is a NULL and we can skip it
+				r = c.currPage.RepetitionLevels()[c.currPageN]
+				d = c.currPage.DefinitionLevels()[c.currPageN]
+				if d != byte(c.maxDefinitionLevel) {
+					// this is a null!
+					c.curr.Next(int(r), int(d), c.maxDefinitionLevel)
+					c.currPageN++
+					continue
+				}
+				v = &c.currBuf[c.currBufN]
+			} else {
+				v = &c.currBuf[c.currBufN]
+				r = byte(v.RepetitionLevel())
+				d = byte(v.DefinitionLevel())
+			}
+
 			// Inspect all values to track the current row number,
 			// even if the value is filtered out next.
-			c.curr.Next(v.RepetitionLevel(), v.DefinitionLevel(), c.maxDefinitionLevel)
+			c.curr.Next(int(r), int(d), c.maxDefinitionLevel)
 			c.currBufN++
 			c.currPageN++
 
@@ -751,6 +784,22 @@ func (c *SyncIterator) next() (RowNumber, *pq.Value, error) {
 
 			return c.curr, v, nil
 		}
+	}
+}
+
+func (c *SyncIterator) setValues(v pq.ValueReader) {
+	c.currValues = v
+
+	// we need to return nulls if we don't have a filter for unknown reasons
+	// jpe - double check
+	if c.filter == nil {
+		return
+	}
+
+	if _, ok := v.(NestedValuesReader); ok {
+		c.currNestedValues = v.(NestedValuesReader)
+	} else {
+		c.currNestedValues = nil
 	}
 }
 
@@ -772,7 +821,7 @@ func (c *SyncIterator) setPage(pg pq.Page) {
 	}
 
 	// Reset value buffers
-	c.currValues = nil
+	c.setValues(nil)
 	c.currPageMax = EmptyRowNumber()
 	c.currPageMin = EmptyRowNumber()
 	c.currBufN = 0
@@ -792,7 +841,7 @@ func (c *SyncIterator) setPage(pg pq.Page) {
 		c.currPage = pg
 		c.currPageMin = c.curr
 		c.currPageMax = rn
-		c.currValues = pg.Values()
+		c.setValues(pg.Values())
 	}
 }
 

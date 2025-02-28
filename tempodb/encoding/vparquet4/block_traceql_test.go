@@ -1040,7 +1040,7 @@ func BenchmarkIterators(b *testing.B) {
 	require.NoError(b, err)
 
 	rgs := pf.RowGroups()
-	rgs = rgs[3:5]
+	//	rgs = rgs[3:5]
 
 	var instrPred *parquetquery.InstrumentedPredicate
 	makeIterInternal := makeIterFunc(ctx, rgs, pf)
@@ -1056,7 +1056,7 @@ func BenchmarkIterators(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		err := error(nil)
 
-		iter := makeIter(columnPathSpanAttrKey, parquetquery.NewSubstringPredicate("e"), "foo")
+		iter := makeIter(columnPathEventAttrKey, parquetquery.NewSubstringPredicate("e"), "foo")
 
 		//parquetquery.NewUnionIterator(DefinitionLevelResourceSpansILSSpanAttrs, []parquetquery.Iterator{
 		// makeIter(columnPathSpanHTTPStatusCode, parquetquery.NewIntEqualPredicate(500), "http_status"),
@@ -1094,11 +1094,11 @@ func BenchmarkIterators(b *testing.B) {
 
 func BenchmarkBackendBlockQueryRange(b *testing.B) {
 	testCases := []string{
-		"{} | rate()",
-		"{} | rate() by (name)",
-		"{} | rate() by (resource.service.name)",
-		"{} | rate() by (span.http.url)", // High cardinality attribute
-		"{resource.service.name=`loki-ingester`} | rate()",
+		// "{} | rate()",
+		// "{} | rate() by (name)",
+		// "{} | rate() by (resource.service.name)",
+		// "{} | rate() by (span.http.url)", // High cardinality attribute
+		// "{resource.service.name=`loki-ingester`} | rate()",
 		"{status=error} | rate()",
 	}
 
@@ -2012,12 +2012,14 @@ func randomTree(N int) []traceql.Span {
 func blockForBenchmarks(b *testing.B) *backendBlock {
 	id, ok := os.LookupEnv("BENCH_BLOCKID")
 	if !ok {
-		b.Fatal("BENCH_BLOCKID is not set. These benchmarks are designed to run against a block on local disk. Set BENCH_BLOCKID to the guid of the block to run benchmarks against. e.g. `export BENCH_BLOCKID=030c8c4f-9d47-4916-aadc-26b90b1d2bc4`")
+		id = "030c8c4f-9d47-4916-aadc-26b90b1d2bc4"
+		//b.Fatal("BENCH_BLOCKID is not set. These benchmarks are designed to run against a block on local disk. Set BENCH_BLOCKID to the guid of the block to run benchmarks against. e.g. `export BENCH_BLOCKID=030c8c4f-9d47-4916-aadc-26b90b1d2bc4`")
 	}
 
 	path, ok := os.LookupEnv("BENCH_PATH")
 	if !ok {
-		b.Fatal("BENCH_PATH is not set. These benchmarks are designed to run against a block on local disk. Set BENCH_PATH to the root of the backend such that the block to benchmark is at <BENCH_PATH>/<BENCH_TENANTID>/<BENCH_BLOCKID>.")
+		path = "/Users/joe/testblock"
+		//b.Fatal("BENCH_PATH is not set. These benchmarks are designed to run against a block on local disk. Set BENCH_PATH to the root of the backend such that the block to benchmark is at <BENCH_PATH>/<BENCH_TENANTID>/<BENCH_BLOCKID>.")
 	}
 
 	tenantID, ok := os.LookupEnv("BENCH_TENANTID")
