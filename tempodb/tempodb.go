@@ -101,7 +101,9 @@ type Reader interface {
 
 type Compactor interface {
 	EnableCompaction(ctx context.Context, cfg *CompactorConfig, sharder CompactorSharder, overrides CompactorOverrides) error
-	CompactWithConfig(ctx context.Context, metas []*backend.BlockMeta, tenant string, cfg *CompactorConfig, sharder CompactorSharder, overrides CompactorOverrides) error
+	CompactWithConfig(ctx context.Context, metas []*backend.BlockMeta, tenantID string, cfg *CompactorConfig, sharder CompactorSharder, overrides CompactorOverrides) ([]*backend.BlockMeta, error)
+	LastCompacted(tenantID string) *time.Time
+	MarkBlocklistCompacted(tenantID string, outputIDs, inputIDs []*backend.BlockMeta) error
 }
 
 type CompactorSharder interface {
