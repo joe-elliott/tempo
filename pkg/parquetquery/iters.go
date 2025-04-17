@@ -705,6 +705,7 @@ func (c *SyncIterator) next() (RowNumber, *pq.Value, error) {
 				continue
 			}
 			if err != nil {
+				// jpe - should we close the chunk here?
 				return EmptyRowNumber(), nil, err
 			}
 			if c.filter != nil && !c.filter.KeepPage(pg) {
