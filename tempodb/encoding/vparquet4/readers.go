@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 
 	"go.uber.org/atomic"
@@ -35,7 +36,11 @@ func NewBackendReaderAt(ctx context.Context, r backend.Reader, name string, meta
 }
 
 func (b *BackendReaderAt) ReadAt(p []byte, off int64) (int, error) {
-	return b.ReadAtWithCache(p, off, cache.RoleNone)
+	n, err := b.ReadAtWithCache(p, off, cache.RoleNone)
+	if err != nil {
+		fmt.Println("+++ BackendReaderAt ReadAt with role", off, "role", cache.RoleNone, "n", n, "error", err)
+	}
+	return n, err
 }
 
 func (b *BackendReaderAt) ReadAtWithCache(p []byte, off int64, role cache.Role) (int, error) {
@@ -111,18 +116,34 @@ func (r *cachedReaderAt) ReadAt(p []byte, off int64) (int, error) {
 	// check if the offset and length is stored as a special object
 	rec, ok := r.cachedObjects[off]
 	if ok && rec.length == int64(len(p)) {
-		return r.r.ReadAtWithCache(p, off, rec.role)
+		b, err := r.r.ReadAtWithCache(p, off, rec.role)
+		if err != nil {
+			fmt.Println("+++ cachedReaderAt ReadAt with role", off, "role", rec.role, "b", b, "error", err)
+		}
+		return b, err
 	}
 
 	if len(p) <= r.maxPageSize {
-		return r.r.ReadAtWithCache(p, off, cache.RoleParquetPage)
+		b, err := r.r.ReadAtWithCache(p, off, cache.RoleParquetPage)
+		if err != nil {
+			fmt.Println("+++ cachedReaderAt ReadAt <= maxPageSize ", off, "role", cache.RoleParquetPage, "b", b, "error", err)
+		}
+		return b, err
 	}
 
-	return r.r.ReadAtWithCache(p, off, cache.RoleNone)
+	b, err := r.r.ReadAtWithCache(p, off, cache.RoleNone)
+	if err != nil {
+		fmt.Println("+++ cachedReaderAt ReadAt > maxPageSize ", off, "role", cache.RoleNone, "b", b, "error", err)
+	}
+	return b, err
 }
 
 func (r *cachedReaderAt) ReadAtWithCache(p []byte, off int64, role cache.Role) (int, error) {
-	return r.r.ReadAtWithCache(p, off, role)
+	b, err := r.r.ReadAtWithCache(p, off, role)
+	if err != nil {
+		fmt.Println("+++ cachedReaderAt ReadAtWithCache", off, "role", role, "b", b, "error", err)
+	}
+	return b, err
 }
 
 // walReaderAt is wrapper over io.ReaderAt, and is used to measure the total bytes read when searching walBlock.
