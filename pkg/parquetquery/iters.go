@@ -519,60 +519,32 @@ func (c *SyncIterator) seekRowGroup(seekTo RowNumber, definitionLevel int) (done
 // seekPages skips ahead in the current row group to the page that could contain the value at
 // the desired row number. Does nothing if the current page is already the correct one.
 func (c *SyncIterator) seekPages(seekTo RowNumber, definitionLevel int) (done bool, err error) {
-	if c.currPage != nil && CompareRowNumbers(definitionLevel, seekTo, c.currPageMax) >= 0 {
-		// Value not in this page
-		c.setPage(nil)
+	if !(c.currPage != nil && CompareRowNumbers(definitionLevel, seekTo, c.currPageMax) >= 0) { // is it on this page?
+		return
 	}
-
-	if c.currPage == nil {
-		// TODO (mdisibio)   :((((((((
-		//    pages.SeekToRow is more costly than expected.  It doesn't reuse existing i/o
-		// so it can't be called naively every time we swap pages. We need to figure out
-		// a way to determine when it is worth calling here.
-		/*
-			// Seek into the pages. This is relative to the start of the row group
-			if seekTo[0] > 0 {
-				// Determine row delta. We subtract 1 because curr points at the previous row
-				skip := seekTo[0] - c.currRowGroupMin[0] - 1
-				if skip > 0 {
-					if err := c.currPages.SeekToRow(skip); err != nil {
-						return true, err
-					}
-					c.curr.Skip(skip)
-				}
-			}*/
-
-		for c.currPage == nil {
-			pg, err := c.currChunk.NextPage()
-			if pg == nil || err != nil {
-				// No more pages in this column chunk,
-				// cleanup and exit.
-				if errors.Is(err, io.EOF) {
-					err = nil
-				}
-				pq.Release(pg)
-				c.closeCurrRowGroup()
-				return true, err
-			}
-
-			// Skip based on row number?
-			newRN := c.curr
-			newRN.Skip(pg.NumRows() + 1)
-			if CompareRowNumbers(definitionLevel, seekTo, newRN) >= 0 {
-				c.curr.Skip(pg.NumRows())
-				pq.Release(pg)
-				continue
-			}
-
-			// Skip based on filter?
-			if c.filter != nil && !c.filter.KeepPage(pg) {
-				c.curr.Skip(pg.NumRows())
-				pq.Release(pg)
-				continue
-			}
-
-			c.setPage(pg)
+	skip := int64(seekTo[0] - c.currRowGroupMin[0] - 1) // jpe - remove - 1? we seek to -1 so when we call "next" we end up on the correct row. should we just seek to the exact row and collect the value?
+	if skip > 0 {
+		// skip!
+		var pgs pq.Pages
+		if c.currChunk.pages != nil {
+			pgs = c.currChunk.pages
+		} else {
+			pgs = c.currChunk.Pages()
+			c.currChunk.pages = pgs
 		}
+
+		if skip < c.currPage.NumRows() { // jpe is this better? use seekInPage?
+			// We are already on the correct page, just return and restore seekWithinPage
+			return false, nil
+		}
+
+		if err := pgs.SeekToRow(skip); err != nil {
+			return true, err
+		}
+		c.curr = seekTo.Preceding()
+
+		// jpe - Read and set the next page if it passes filters, else seek forward?
+		c.setPage(nil) // will force the next Next to read to the page which does the actual seeking in parquet-go
 	}
 
 	return false, nil
@@ -582,6 +554,11 @@ func (c *SyncIterator) seekPages(seekTo RowNumber, definitionLevel int) (done bo
 // or allow the iterator to call Next() until it finds the desired row number. it uses the magicThreshold
 // as its balance point. if the number of Next()s to skip is less than the magicThreshold, it will not reslice
 func (c *SyncIterator) seekWithinPage(to RowNumber, definitionLevel int) {
+	// jpe - fix this and maybe get some perf back?
+	if c.currPage == nil {
+		return
+	}
+
 	rowSkipRelative := int(to[0] - c.curr[0])
 	if rowSkipRelative == 0 {
 		return
