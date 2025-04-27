@@ -4,7 +4,9 @@ import (
 	"context"
 	"io"
 	"math"
+	"math/rand/v2"
 	"os"
+	"slices"
 	"strconv"
 	"testing"
 
@@ -153,13 +155,11 @@ func testColumnIteratorSeek(t *testing.T, makeIter makeTestIterFn) {
 	iter := makeIter(pf, idx, nil, "A")
 	defer iter.Close()
 
-	seekTos := []int32{
-		100,
-		1234,
-		4567,
-		5000,
-		7890,
+	seekTos := make([]int32, 100)
+	for i := range seekTos {
+		seekTos[i] = int32(rand.IntN(count))
 	}
+	slices.Sort(seekTos)
 
 	for _, seekTo := range seekTos {
 		rn := EmptyRowNumber()
@@ -298,7 +298,7 @@ func createFileWith[T any](t testing.TB, ctx context.Context, rows []T) *parquet
 
 	half := len(rows) / 2
 
-	w := parquet.NewGenericWriter[T](f)
+	w := parquet.NewGenericWriter[T](f, parquet.PageBufferSize(10))
 	_, err = w.Write(rows[0:half])
 	require.NoError(t, err)
 	require.NoError(t, w.Flush())

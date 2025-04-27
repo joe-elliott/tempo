@@ -803,6 +803,7 @@ func (f *FilePages) ReadPage() (Page, error) {
 		if f.skip < 0 {
 			f.skip = 0
 		}
+		Release(f.page)
 		f.page = nil
 	}
 
@@ -840,6 +841,7 @@ func (f *FilePages) ReadPage() (Page, error) {
 
 			f.index++
 			f.row += int64(header.DataPageHeaderV2.NumRows)
+			Release(f.page)
 			f.page = nil // jpe - necssary?
 
 			continue
@@ -878,6 +880,7 @@ func (f *FilePages) ReadPage() (Page, error) {
 		f.index++
 		if f.skip == 0 {
 			//f.row += page.NumRows()
+			Release(f.page)
 			f.page = page // jpe - do we need to call buffer.ref()? add to test
 			Retain(page)
 			return page, nil
@@ -1016,6 +1019,7 @@ func (f *FilePages) SeekToRow(rowIndex int64) (err error) {
 		f.skip = rowIndex
 		f.row = 0
 		f.index = 0
+		Release(f.page)
 		f.page = nil
 		if f.dictOffset > 0 {
 			f.index = 1
@@ -1052,6 +1056,8 @@ func (f *FilePages) Close() error {
 	f.index = 0
 	f.skip = 0
 	f.dictionary = nil
+	Release(f.page)
+	f.page = nil
 	return nil
 }
 

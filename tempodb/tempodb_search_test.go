@@ -104,6 +104,7 @@ func traceQLRunner(t *testing.T, _ *tempopb.Trace, wantMeta *tempopb.TraceSearch
 
 	searchesThatMatch = append(searchesThatMatch, quotedAttributesThatMatch...)
 	searchesThatMatch = append(searchesThatMatch, parentIDQuery)
+
 	for _, req := range searchesThatMatch {
 		fetcher := traceql.NewSpansetFetcherWrapper(func(ctx context.Context, req traceql.FetchSpansRequest) (traceql.FetchSpansResponse, error) {
 			return r.Fetch(ctx, meta, req, common.DefaultSearchOptions())
@@ -1705,7 +1706,7 @@ func runCompleteBlockSearchTest(t *testing.T, blockVersion string, runners ...ru
 			BloomShardSizeBytes:  100_000,
 			Version:              blockVersion,
 			IndexPageSizeBytes:   1000,
-			RowGroupSizeBytes:    10000,
+			RowGroupSizeBytes:    100000,
 			DedicatedColumns:     dc,
 		},
 		WAL: &wal.Config{

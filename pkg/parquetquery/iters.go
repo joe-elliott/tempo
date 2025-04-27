@@ -519,32 +519,66 @@ func (c *SyncIterator) seekRowGroup(seekTo RowNumber, definitionLevel int) (done
 // seekPages skips ahead in the current row group to the page that could contain the value at
 // the desired row number. Does nothing if the current page is already the correct one.
 func (c *SyncIterator) seekPages(seekTo RowNumber, definitionLevel int) (done bool, err error) {
-	if !(c.currPage != nil && CompareRowNumbers(definitionLevel, seekTo, c.currPageMax) >= 0) { // is it on this page?
-		return
+	if c.currPage != nil && CompareRowNumbers(definitionLevel, seekTo, c.currPageMax) >= 0 {
+		// Value not in this page
+		c.setPage(nil)
 	}
-	skip := int64(seekTo[0] - c.currRowGroupMin[0] - 1) // jpe - remove - 1? we seek to -1 so when we call "next" we end up on the correct row. should we just seek to the exact row and collect the value?
-	if skip > 0 {
-		// skip!
-		var pgs pq.Pages
-		if c.currChunk.pages != nil {
-			pgs = c.currChunk.pages
-		} else {
-			pgs = c.currChunk.Pages()
-			c.currChunk.pages = pgs
+
+	if c.currPage == nil {
+		// first seek to the correct row using the pages object
+		// jpe - currChunk is not correct, how do we set it?
+
+		rowInRG := int64(seekTo[0] - c.currRowGroupMin[0] - 1) // jpe - remove - 1? we seek to -1 so when we call "next" we end up on the correct row. should we just seek to the exact row and collect the value?
+		skips := seekTo[0] - c.curr[0]
+		if rowInRG > 0 && skips > 1000 { // jpe - threshold? i.e. don't bother if < 10? 50? slicing is expensive :(
+			pgs := c.currChunk.pages
+			if pgs == nil {
+				pgs = c.currChunk.Pages()
+				c.currChunk.pages = pgs
+			}
+			if c.currChunk.firstPage != nil {
+				pq.Release(c.currChunk.firstPage)
+				c.currChunk.firstPage = nil
+			}
+
+			if err := pgs.SeekToRow(rowInRG); err != nil {
+				return true, err
+			}
+
+			c.curr = TruncateRowNumber(0, seekTo).Preceding() // jpe - if currChunk.page is not nil we need to clear it out to force a ReadPage
 		}
 
-		if skip < c.currPage.NumRows() { // jpe is this better? use seekInPage?
-			// We are already on the correct page, just return and restore seekWithinPage
-			return false, nil
-		}
+		for c.currPage == nil {
+			pg, err := c.currChunk.NextPage()
+			if pg == nil || err != nil {
+				// No more pages in this column chunk,
+				// cleanup and exit.
+				if errors.Is(err, io.EOF) {
+					err = nil
+				}
+				pq.Release(pg)
+				c.closeCurrRowGroup()
+				return true, err
+			}
 
-		if err := pgs.SeekToRow(skip); err != nil {
-			return true, err
-		}
-		c.curr = seekTo.Preceding()
+			// Skip based on row number?
+			newRN := c.curr
+			newRN.Skip(pg.NumRows() + 1)
+			if CompareRowNumbers(definitionLevel, seekTo, newRN) >= 0 {
+				c.curr.Skip(pg.NumRows())
+				pq.Release(pg)
+				continue
+			}
 
-		// jpe - Read and set the next page if it passes filters, else seek forward?
-		c.setPage(nil) // will force the next Next to read to the page which does the actual seeking in parquet-go
+			// Skip based on filter?
+			if c.filter != nil && !c.filter.KeepPage(pg) {
+				c.curr.Skip(pg.NumRows())
+				pq.Release(pg)
+				continue
+			}
+
+			c.setPage(pg)
+		}
 	}
 
 	return false, nil
@@ -554,11 +588,6 @@ func (c *SyncIterator) seekPages(seekTo RowNumber, definitionLevel int) (done bo
 // or allow the iterator to call Next() until it finds the desired row number. it uses the magicThreshold
 // as its balance point. if the number of Next()s to skip is less than the magicThreshold, it will not reslice
 func (c *SyncIterator) seekWithinPage(to RowNumber, definitionLevel int) {
-	// jpe - fix this and maybe get some perf back?
-	if c.currPage == nil {
-		return
-	}
-
 	rowSkipRelative := int(to[0] - c.curr[0])
 	if rowSkipRelative == 0 {
 		return
