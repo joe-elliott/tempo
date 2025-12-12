@@ -1,7 +1,6 @@
 package util
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -9,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"text/template"
 	"time"
 
 	"github.com/grafana/e2e"
@@ -321,225 +319,6 @@ func setupConfig(t *testing.T, s *e2e.Scenario, config *TestHarnessConfig, reque
 	return cfg
 }
 
-// startBackend starts the appropriate object storage backend based on the config
-func startBackend(t *testing.T, s *e2e.Scenario, cfg app.Config) (e2e.Service, error) {
-	t.Helper()
-
-	var backendService e2e.Service
-	switch cfg.StorageConfig.Trace.Backend {
-	case backend.S3:
-		port, err := parsePort(cfg.StorageConfig.Trace.S3.Endpoint)
-		if err != nil {
-			return nil, err
-		}
-		backendService = e2edb.NewMinio(port, "tempo")
-		if backendService == nil {
-			return nil, fmt.Errorf("error creating minio backend")
-		}
-		err = s.StartAndWaitReady(backendService)
-		if err != nil {
-			return nil, err
-		}
-	case backend.Azure:
-		port, err := parsePort(cfg.StorageConfig.Trace.Azure.Endpoint)
-		if err != nil {
-			return nil, err
-		}
-		backendService = newAzurite(port)
-		err = s.StartAndWaitReady(backendService)
-		if err != nil {
-			return nil, err
-		}
-		// Get the actual endpoint after the service is started
-		httpService, ok := backendService.(*e2e.HTTPService)
-		if ok {
-			cfg.StorageConfig.Trace.Azure.Endpoint = httpService.Endpoint(port)
-		}
-		_, err = azure.CreateContainer(context.TODO(), cfg.StorageConfig.Trace.Azure)
-		if err != nil {
-			return nil, err
-		}
-	case backend.GCS:
-		port, err := parsePort(cfg.StorageConfig.Trace.GCS.Endpoint)
-		if err != nil {
-			return nil, err
-		}
-		backendService = newGCS(port)
-		if backendService == nil {
-			return nil, fmt.Errorf("error creating gcs backend")
-		}
-		err = s.StartAndWaitReady(backendService)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return backendService, nil
-}
-
-// parsePort extracts the port number from an endpoint string
-func parsePort(endpoint string) (int, error) {
-	substrings := strings.Split(endpoint, ":")
-	portStrings := strings.Split(substrings[len(substrings)-1], "/")
-	port, err := strconv.Atoi(portStrings[0])
-	if err != nil {
-		return 0, err
-	}
-	return port, nil
-}
-
-// applyConfigOverlay applies a config overlay file onto the shared config.yaml file,
-// with optional template rendering. The overlay is merged onto the existing shared config
-// and written back to shared config.yaml.
-func applyConfigOverlay(s *e2e.Scenario, overlayPath string, templateData map[string]any) error {
-	configPath := s.SharedDir() + "/config.yaml" // make a shared func somewhere
-
-	// Read and parse current shared config
-	baseBuff, err := os.ReadFile(configPath)
-	if err != nil {
-		return fmt.Errorf("failed to read shared config file: %w", err)
-	}
-
-	var baseMap map[any]any
-	err = yaml.Unmarshal(baseBuff, &baseMap)
-	if err != nil {
-		return fmt.Errorf("failed to parse shared config file: %w", err)
-	}
-
-	// If there's an overlay, apply it
-	if overlayPath != "" {
-		// Read overlay file
-		overlayBuff, err := os.ReadFile(overlayPath)
-		if err != nil {
-			return fmt.Errorf("failed to read config overlay file: %w", err)
-		}
-
-		// Apply template rendering if template data is provided
-		if len(templateData) > 0 {
-			tmpl, err := template.New("config").Parse(string(overlayBuff))
-			if err != nil {
-				return fmt.Errorf("failed to parse config overlay template: %w", err)
-			}
-
-			var renderedBuff bytes.Buffer
-			err = tmpl.Execute(&renderedBuff, templateData)
-			if err != nil {
-				return fmt.Errorf("failed to execute config overlay template: %w", err)
-			}
-
-			overlayBuff = renderedBuff.Bytes()
-		}
-
-		// Parse overlay
-		var overlayMap map[any]any
-		err = yaml.Unmarshal(overlayBuff, &overlayMap)
-		if err != nil {
-			return fmt.Errorf("failed to parse config overlay file: %w", err)
-		}
-
-		// Merge overlay onto base
-		baseMap = mergeMaps(baseMap, overlayMap)
-	}
-
-	// Marshal and write the result back to shared config jpe - use writeFileToSharedDir func?
-	outputBytes, err := yaml.Marshal(baseMap)
-	if err != nil {
-		return fmt.Errorf("failed to marshal merged config: %w", err)
-	}
-
-	err = os.WriteFile(configPath, outputBytes, 0644)
-	if err != nil {
-		return fmt.Errorf("failed to write config file: %w", err)
-	}
-
-	return nil
-}
-
-// mergeMaps recursively merges overlay map onto base map
-// Values in overlay take precedence over base values
-func mergeMaps(base, overlay map[any]any) map[any]any {
-	result := make(map[any]any)
-
-	// Copy all base values
-	for k, v := range base {
-		result[k] = v
-	}
-
-	// Overlay values, recursively merging nested maps
-	for k, v := range overlay {
-		if v == nil {
-			result[k] = v
-			continue
-		}
-
-		// If both base and overlay have a map at this key, merge recursively
-		if baseVal, exists := result[k]; exists {
-			baseMap, baseIsMap := toMapAnyAny(baseVal)
-			overlayMap, overlayIsMap := toMapAnyAny(v)
-
-			if baseIsMap && overlayIsMap {
-				result[k] = mergeMaps(baseMap, overlayMap)
-				continue
-			}
-		}
-
-		// Otherwise, overlay value replaces base value
-		result[k] = v
-	}
-
-	return result
-}
-
-// toMapAnyAny converts various map types to map[any]any
-func toMapAnyAny(v any) (map[any]any, bool) {
-	switch m := v.(type) {
-	case map[any]any:
-		return m, true
-	case map[string]any:
-		result := make(map[any]any)
-		for k, v := range m {
-			result[k] = v
-		}
-		return result, true
-	default:
-		return nil, false
-	}
-}
-
-// newAzurite creates a new Azurite service for Azure blob storage emulation
-func newAzurite(port int) *e2e.HTTPService {
-	s := e2e.NewHTTPService(
-		"azurite",
-		azuriteImage,
-		e2e.NewCommandWithoutEntrypoint("sh", "-c", "azurite -l /data --blobHost 0.0.0.0"),
-		e2e.NewHTTPReadinessProbe(port, "/devstoreaccount1?comp=list", 403, 403), // If we get 403 the Azurite is ready
-		port, // blob storage port
-	)
-
-	s.SetBackoff(TempoBackoff())
-
-	return s
-}
-
-// newGCS creates a new fake GCS service for Google Cloud Storage emulation
-func newGCS(port int) *e2e.HTTPService {
-	commands := []string{
-		"mkdir -p /data/tempo",
-		"/bin/fake-gcs-server -data /data -public-host=tempo_e2e-gcs -port=4443",
-	}
-	s := e2e.NewHTTPService(
-		"gcs",
-		gcsImage,
-		e2e.NewCommandWithoutEntrypoint("sh", "-c", strings.Join(commands, " && ")),
-		e2e.NewHTTPReadinessProbe(port, "/", 400, 400), // for lack of a better way, readiness probe does not support https at the moment
-		port,
-	)
-
-	s.SetBackoff(TempoBackoff())
-
-	return s
-}
-
 // UpdateOverrides updates the tenant overrides file with the provided configuration.
 // The overrides parameter should be a map where keys are tenant IDs and values are
 // override configurations for that tenant.
@@ -648,6 +427,104 @@ func (h *TempoHarness) RestartServiceWithConfigOverlay(t *testing.T, service *e2
 	require.NotNil(t, h.OTLPExporter)
 
 	return nil
+}
+
+/*
+  local object storage
+*/
+// startBackend starts the appropriate object storage backend based on the config
+func startBackend(t *testing.T, s *e2e.Scenario, cfg app.Config) (e2e.Service, error) {
+	t.Helper()
+
+	var backendService e2e.Service
+	switch cfg.StorageConfig.Trace.Backend {
+	case backend.S3:
+		port, err := parsePort(cfg.StorageConfig.Trace.S3.Endpoint)
+		if err != nil {
+			return nil, err
+		}
+		backendService = e2edb.NewMinio(port, "tempo")
+		err = s.StartAndWaitReady(backendService)
+		if err != nil {
+			return nil, err
+		}
+	case backend.Azure:
+		port, err := parsePort(cfg.StorageConfig.Trace.Azure.Endpoint)
+		if err != nil {
+			return nil, err
+		}
+		backendService = newAzurite(port)
+		err = s.StartAndWaitReady(backendService)
+		if err != nil {
+			return nil, err
+		}
+		// Get the actual endpoint after the service is started
+		httpService, ok := backendService.(*e2e.HTTPService)
+		if ok {
+			cfg.StorageConfig.Trace.Azure.Endpoint = httpService.Endpoint(port)
+		}
+		_, err = azure.CreateContainer(context.TODO(), cfg.StorageConfig.Trace.Azure)
+		if err != nil {
+			return nil, err
+		}
+	case backend.GCS:
+		port, err := parsePort(cfg.StorageConfig.Trace.GCS.Endpoint)
+		if err != nil {
+			return nil, err
+		}
+		backendService = newGCS(port)
+		err = s.StartAndWaitReady(backendService)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return backendService, nil
+}
+
+// parsePort extracts the port number from an endpoint string
+func parsePort(endpoint string) (int, error) {
+	substrings := strings.Split(endpoint, ":")
+	portStrings := strings.Split(substrings[len(substrings)-1], "/")
+	port, err := strconv.Atoi(portStrings[0])
+	if err != nil {
+		return 0, err
+	}
+	return port, nil
+}
+
+// newAzurite creates a new Azurite service for Azure blob storage emulation
+func newAzurite(port int) *e2e.HTTPService {
+	s := e2e.NewHTTPService(
+		"azurite",
+		azuriteImage,
+		e2e.NewCommandWithoutEntrypoint("sh", "-c", "azurite -l /data --blobHost 0.0.0.0"),
+		e2e.NewHTTPReadinessProbe(port, "/devstoreaccount1?comp=list", 403, 403), // If we get 403 the Azurite is ready
+		port, // blob storage port
+	)
+
+	s.SetBackoff(TempoBackoff())
+
+	return s
+}
+
+// newGCS creates a new fake GCS service for Google Cloud Storage emulation
+func newGCS(port int) *e2e.HTTPService {
+	commands := []string{
+		"mkdir -p /data/tempo",
+		"/bin/fake-gcs-server -data /data -public-host=tempo_e2e-gcs -port=4443",
+	}
+	s := e2e.NewHTTPService(
+		"gcs",
+		gcsImage,
+		e2e.NewCommandWithoutEntrypoint("sh", "-c", strings.Join(commands, " && ")),
+		e2e.NewHTTPReadinessProbe(port, "/", 400, 400), // for lack of a better way, readiness probe does not support https at the moment
+		port,
+	)
+
+	s.SetBackoff(TempoBackoff())
+
+	return s
 }
 
 // startMicroservices starts all Tempo microservices and waits for them to be ready - jpe - start multiple concurrently
