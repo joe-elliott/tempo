@@ -76,10 +76,8 @@ func TestTagEndpoints(t *testing.T) {
 		}
 
 		// wait for 4 objects to be written to the backend
-		h.WaitTracesWrittenToBackend(t, 4) // jpe - use as the gate for restarting for backend reads
-
-		frontend := h.Services[util.ServiceQueryFrontend]
-		require.NoError(t, h.RestartServiceWithConfigOverlay(t, frontend, "../util/config-query-backend.yaml"))
+		h.WaitTracesWrittenToBackend(t, 4)
+		h.ForceBackendQuerying(t)
 
 		// Assert tags on storage backend
 		now := time.Now()
@@ -415,7 +413,7 @@ func TestTraceByIDandTraceQL(t *testing.T) {
 		infos := make([]*tempoUtil.TraceInfo, 0, countTraces)
 
 		for range countTraces {
-			time.Sleep(time.Nanosecond) // force a new seed
+			time.Sleep(time.Millisecond) // force a new seed
 			info := tempoUtil.NewTraceInfo(time.Now(), "")
 			infos = append(infos, info)
 			require.NoError(t, info.EmitAllBatches(h.JaegerExporter))
@@ -434,8 +432,7 @@ func TestTraceByIDandTraceQL(t *testing.T) {
 		}
 
 		h.WaitTracesWrittenToBackend(t, countTraces)
-		queryFrontend := h.Services[util.ServiceQueryFrontend]
-		require.NoError(t, h.RestartServiceWithConfigOverlay(t, queryFrontend, "../util/config-query-backend.yaml"))
+		h.ForceBackendQuerying(t)
 
 		grpcClient, err = util.NewSearchGRPCClient(context.Background(), h.QueryFrontendGRPCEndpoint)
 		require.NoError(t, err)

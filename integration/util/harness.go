@@ -305,14 +305,9 @@ func (h *TempoHarness) GetConfig() (app.Config, error) {
 	return cfg, nil
 }
 
-// RestartServiceWithConfigOverlay stops a service, applies a config overlay, and restarts the service.
+// restartServiceWithConfigOverlay stops a service, applies a config overlay, and restarts the service.
 // The overlay file is merged onto the existing config, with overlay values taking precedence.
-//
-// Example usage:
-//
-//	queryFrontend := h.Services[util.ServiceQueryFrontend]
-//	err := h.RestartServiceWithConfigOverlay(queryFrontend, "./config-query-backend.yaml")
-func (h *TempoHarness) RestartServiceWithConfigOverlay(t *testing.T, service *e2e.HTTPService, overlayPath string) error { // jpe -restart of single binary takes forever
+func (h *TempoHarness) restartServiceWithConfigOverlay(t *testing.T, service *e2e.HTTPService, overlayPath string) error { // jpe -restart of single binary takes forever
 	// Stop the service
 	err := service.Stop()
 	if strings.Contains(err.Error(), "exit status 137") { // 137 is returned by linux when it is force killed b/c it doesn't stop in time.
@@ -372,6 +367,11 @@ func (h *TempoHarness) WaitTracesWrittenToBackend(t *testing.T, traces int) {
 
 	queryFrontend := h.Services[ServiceQueryFrontend]
 	require.NoError(t, queryFrontend.WaitSumMetricsWithOptions(e2e.Equals(float64(traces)), []string{"tempodb_backend_objects_total"}, e2e.WaitMissingMetrics))
+}
+
+func (h *TempoHarness) ForceBackendQuerying(t *testing.T) {
+	frontend := h.Services[ServiceQueryFrontend]
+	require.NoError(t, h.restartServiceWithConfigOverlay(t, frontend, "../util/config-query-backend.yaml"))
 }
 
 /*

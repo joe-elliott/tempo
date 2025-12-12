@@ -69,8 +69,7 @@ func TestEncodings(t *testing.T) {
 				)
 				require.NoError(t, err)
 
-				frontend := h.Services[util.ServiceQueryFrontend]
-				require.NoError(t, h.RestartServiceWithConfigOverlay(t, frontend, "../util/config-query-backend.yaml"))
+				h.ForceBackendQuerying(t)
 
 				grpcClient, err := util.NewSearchGRPCClient(context.Background(), h.QueryFrontendGRPCEndpoint) // jpe -add grpc client to harness?
 				require.NoError(t, err)
