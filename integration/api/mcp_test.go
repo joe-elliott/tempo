@@ -32,8 +32,7 @@ func TestMCP(t *testing.T) {
 		require.NoError(t, err)
 
 		// Wait for the trace to be written to the WAL
-		liveStoreZoneA := h.Services[util.ServiceLiveStoreZoneA]
-		require.NoError(t, liveStoreZoneA.WaitSumMetricsWithOptions(e2e.Equals(1), []string{"tempo_live_store_traces_created_total"}, e2e.WaitMissingMetrics))
+		h.WaitTracesQueryable(t, 1)
 
 		// now query it back with mcp
 		queryFrontend := h.Services[util.ServiceQueryFrontend]

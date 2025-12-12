@@ -114,17 +114,7 @@ func TestKVStores(t *testing.T) {
 				))
 
 				// Wait for trace to be created in live stores
-				require.NoError(t, liveStoreA.WaitSumMetricsWithOptions(
-					e2e.Greater(0),
-					[]string{"tempo_live_store_traces_created_total"},
-					e2e.WaitMissingMetrics,
-				))
-
-				require.NoError(t, liveStoreB.WaitSumMetricsWithOptions(
-					e2e.Greater(0),
-					[]string{"tempo_live_store_traces_created_total"},
-					e2e.WaitMissingMetrics,
-				))
+				h.WaitTracesQueryable(t, 1)
 
 				// Find trace
 				util.QueryAndAssertTrace(t, h.HTTPClient, info)

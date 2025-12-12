@@ -247,78 +247,6 @@ func runTempoHarness(t *testing.T, harnessCfg TestHarnessConfig, requestedBacken
 	testFunc(harness)
 }
 
-// normalizeTestName creates a valid Docker service name from a test name
-func normalizeTestName(testName string) string {
-	// max docker name length is 63. otherwise dns fails silently
-	// max test name length is 40 to leave room prefix and suffix. the full container name will be e2e_<test name>_<service name>
-	// this means that if two tests have the same first 40 characters in their names they will conflict!!
-	maxNameLen := 40
-	name := testName[len("Test"):] // strip "Test" prefix
-	if len(name) > maxNameLen {
-		name = name[:maxNameLen]
-	}
-	// docker only allows a-zA-Z0-9_.- in a service name. replace everything else with _
-	re := regexp.MustCompile(`[^a-zA-Z0-9_.-]`)
-	return re.ReplaceAllString(name, "_")
-}
-
-// setupConfig loads and merges config files, creates the overrides file, and validates the config
-func setupConfig(t *testing.T, s *e2e.Scenario, config *TestHarnessConfig, requestedBackend string, harness *TempoHarness) app.Config {
-	t.Helper()
-
-	// Initialize template data if needed
-	if config.ConfigTemplateData == nil {
-		config.ConfigTemplateData = make(map[string]any)
-	}
-
-	// Call ConfigTemplateFunc if provided to populate template data
-	if config.ConfigTemplateFunc != nil {
-		err := config.ConfigTemplateFunc(s, config.ConfigTemplateData)
-		require.NoError(t, err, "failed to execute config template function")
-	}
-
-	// Copy base config to shared directory
-	baseConfigPath := "../util/config-base.yaml" // jpe - read from the context of the other folder. need to make these consts somewhere with a note
-	err := CopyFileToSharedDir(s, baseConfigPath, "config.yaml")
-	require.NoError(t, err, "failed to copy base config to shared dir")
-
-	// Apply single binary specific config if in single binary mode
-	if config.DeploymentMode == DeploymentModeSingleBinary {
-		err := applyConfigOverlay(s, "../util/config-single-binary.yaml", nil)
-		require.NoError(t, err, "failed to apply single binary config overlay")
-	}
-
-	// backend overlay
-	if requestedBackend != backend.Local {
-		backendOverlay := fmt.Sprintf("../util/config-backend-%s.yaml", requestedBackend)
-		err := applyConfigOverlay(s, backendOverlay, nil)
-		require.NoError(t, err, "failed to apply backend config overlay", requestedBackend)
-	}
-
-	// Apply config overlay if provided
-	if config.ConfigOverlay != "" {
-		err := applyConfigOverlay(s, config.ConfigOverlay, config.ConfigTemplateData)
-		require.NoError(t, err, "failed to apply config overlay")
-	}
-
-	// Create empty overrides file
-	overridesPath := s.SharedDir() + "/overrides.yaml"
-	err = os.WriteFile(overridesPath, []byte("overrides: {}\n"), 0644)
-	require.NoError(t, err, "failed to write initial overrides file")
-	harness.overridesPath = overridesPath
-
-	// Read and parse the final config
-	configPath := s.SharedDir() + "/config.yaml" // jpe - make a shared func somewhere
-	configBytes, err := os.ReadFile(configPath)
-	require.NoError(t, err, "failed to read merged config file")
-
-	var cfg app.Config
-	err = yaml.UnmarshalStrict(configBytes, &cfg)
-	require.NoError(t, err, "failed to unmarshal merged config into app.Config")
-
-	return cfg
-}
-
 // UpdateOverrides updates the tenant overrides file with the provided configuration.
 // The overrides parameter should be a map where keys are tenant IDs and values are
 // override configurations for that tenant.
@@ -427,6 +355,23 @@ func (h *TempoHarness) RestartServiceWithConfigOverlay(t *testing.T, service *e2
 	require.NotNil(t, h.OTLPExporter)
 
 	return nil
+}
+
+func (h *TempoHarness) WaitTracesQueryable(t *testing.T, traces int) {
+	t.Helper()
+
+	liveStoreZoneA := h.Services[ServiceLiveStoreZoneA]
+	require.NoError(t, liveStoreZoneA.WaitSumMetricsWithOptions(e2e.Equals(float64(traces)), []string{"tempo_live_store_traces_created_total"}, e2e.WaitMissingMetrics))
+
+	liveStoreZoneB := h.Services[ServiceLiveStoreZoneB]
+	require.NoError(t, liveStoreZoneB.WaitSumMetricsWithOptions(e2e.Equals(float64(traces)), []string{"tempo_live_store_traces_created_total"}, e2e.WaitMissingMetrics))
+}
+
+func (h *TempoHarness) WaitTracesWrittenToBackend(t *testing.T, traces int) {
+	t.Helper()
+
+	queryFrontend := h.Services[ServiceQueryFrontend]
+	require.NoError(t, queryFrontend.WaitSumMetricsWithOptions(e2e.Equals(float64(traces)), []string{"tempodb_backend_objects_total"}, e2e.WaitMissingMetrics))
 }
 
 /*
@@ -655,4 +600,19 @@ func startSingleBinary(t *testing.T, s *e2e.Scenario, harness *TempoHarness, con
 	harness.DistributorOTLPEndpoint = tempo.Endpoint(4317)
 
 	return nil
+}
+
+// normalizeTestName creates a valid Docker service name from a test name
+func normalizeTestName(testName string) string {
+	// max docker name length is 63. otherwise dns fails silently
+	// max test name length is 40 to leave room prefix and suffix. the full container name will be e2e_<test name>_<service name>
+	// this means that if two tests have the same first 40 characters in their names they will conflict!!
+	maxNameLen := 40
+	name := testName[len("Test"):] // strip "Test" prefix
+	if len(name) > maxNameLen {
+		name = name[:maxNameLen]
+	}
+	// docker only allows a-zA-Z0-9_.- in a service name. replace everything else with _
+	re := regexp.MustCompile(`[^a-zA-Z0-9_.-]`)
+	return re.ReplaceAllString(name, "_")
 }

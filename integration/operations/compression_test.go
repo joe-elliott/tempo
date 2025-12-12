@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/grafana/e2e"
 	"github.com/grafana/tempo/integration/util"
 	"github.com/stretchr/testify/require"
 
@@ -22,8 +21,7 @@ func TestCompression(t *testing.T) {
 		info := tempoUtil.NewTraceInfo(time.Now(), "")
 		require.NoError(t, info.EmitAllBatches(h.JaegerExporter))
 
-		liveStoreA := h.Services[util.ServiceLiveStoreZoneA]
-		require.NoError(t, liveStoreA.WaitSumMetricsWithOptions(e2e.Equals(1), []string{"tempo_live_store_traces_created_total"}, e2e.WaitMissingMetrics))
+		h.WaitTracesQueryable(t, 1)
 
 		// Create client with compression
 		util.QueryAndAssertTrace(t, h.HTTPClient, info)

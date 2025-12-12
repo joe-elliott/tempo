@@ -52,8 +52,7 @@ func testSearch(t *testing.T, tenant string) {
 		}
 
 		// assert that we have one trace for each tenant and correct number of spans received
-		liveStoreZoneA := h.Services[util.ServiceLiveStoreZoneA]
-		require.NoError(t, liveStoreZoneA.WaitSumMetrics(e2e.Equals(float64(tenantSize)), "tempo_live_store_traces_created_total"))
+		h.WaitTracesQueryable(t, tenantSize)
 
 		distributor := h.Services[util.ServiceDistributor]
 		require.NoError(t, distributor.WaitSumMetrics(e2e.Equals(expectedSpans), "tempo_distributor_spans_received_total"))

@@ -36,8 +36,7 @@ func TestSearchUsingJaegerPlugin(t *testing.T) {
 		require.NoError(t, h.JaegerExporter.EmitBatch(context.Background(), batch))
 
 		// wait for the 2 traces to be written to the live stores
-		liveStoreA := h.Services[util.ServiceLiveStoreZoneA]
-		require.NoError(t, liveStoreA.WaitSumMetricsWithOptions(e2e.Equals(2), []string{"tempo_live_store_traces_created_total"}, e2e.WaitMissingMetrics))
+		h.WaitTracesQueryable(t, 2)
 
 		callJaegerQuerySearchServicesAssert(t, jaegerQuery, servicesOrOpJaegerQueryResponse{
 			Data: []string{

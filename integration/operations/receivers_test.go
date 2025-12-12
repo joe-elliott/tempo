@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/grafana/dskit/user"
-	"github.com/grafana/e2e"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/exporter/zipkinexporter"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -174,7 +173,7 @@ func TestReceivers(t *testing.T) {
 				require.NoError(t, exp.Shutdown(context.Background()))
 
 				expectedTraces := i + 1
-				require.NoError(t, h.Services[util.ServiceLiveStoreZoneA].WaitSumMetricsWithOptions(e2e.Equals(float64(expectedTraces)), []string{"tempo_live_store_traces_created_total"}, e2e.WaitMissingMetrics))
+				h.WaitTracesQueryable(t, expectedTraces)
 
 				// query for the trace
 				trace, err := h.HTTPClient.QueryTrace(tempoUtil.TraceIDToHexString(traceID))

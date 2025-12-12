@@ -5,10 +5,71 @@ import (
 	"fmt"
 	"html/template"
 	"os"
+	"testing"
 
 	"github.com/grafana/e2e"
+	"github.com/grafana/tempo/cmd/tempo/app"
+	"github.com/grafana/tempo/tempodb/backend"
+	"github.com/stretchr/testify/require"
 	"go.yaml.in/yaml/v2"
 )
+
+// setupConfig loads and merges config files, creates the overrides file, and validates the config
+func setupConfig(t *testing.T, s *e2e.Scenario, config *TestHarnessConfig, requestedBackend string, harness *TempoHarness) app.Config {
+	t.Helper()
+
+	// Initialize template data if needed
+	if config.ConfigTemplateData == nil {
+		config.ConfigTemplateData = make(map[string]any)
+	}
+
+	// Call ConfigTemplateFunc if provided to populate template data
+	if config.ConfigTemplateFunc != nil {
+		err := config.ConfigTemplateFunc(s, config.ConfigTemplateData)
+		require.NoError(t, err, "failed to execute config template function")
+	}
+
+	// Copy base config to shared directory
+	baseConfigPath := "../util/config-base.yaml" // jpe - read from the context of the other folder. need to make these consts somewhere with a note
+	err := CopyFileToSharedDir(s, baseConfigPath, "config.yaml")
+	require.NoError(t, err, "failed to copy base config to shared dir")
+
+	// Apply single binary specific config if in single binary mode
+	if config.DeploymentMode == DeploymentModeSingleBinary {
+		err := applyConfigOverlay(s, "../util/config-single-binary.yaml", nil)
+		require.NoError(t, err, "failed to apply single binary config overlay")
+	}
+
+	// backend overlay
+	if requestedBackend != backend.Local {
+		backendOverlay := fmt.Sprintf("../util/config-backend-%s.yaml", requestedBackend)
+		err := applyConfigOverlay(s, backendOverlay, nil)
+		require.NoError(t, err, "failed to apply backend config overlay", requestedBackend)
+	}
+
+	// Apply config overlay if provided
+	if config.ConfigOverlay != "" {
+		err := applyConfigOverlay(s, config.ConfigOverlay, config.ConfigTemplateData)
+		require.NoError(t, err, "failed to apply config overlay")
+	}
+
+	// Create empty overrides file
+	overridesPath := s.SharedDir() + "/overrides.yaml"
+	err = os.WriteFile(overridesPath, []byte("overrides: {}\n"), 0644)
+	require.NoError(t, err, "failed to write initial overrides file")
+	harness.overridesPath = overridesPath
+
+	// Read and parse the final config
+	configPath := s.SharedDir() + "/config.yaml" // jpe - make a shared func somewhere
+	configBytes, err := os.ReadFile(configPath)
+	require.NoError(t, err, "failed to read merged config file")
+
+	var cfg app.Config
+	err = yaml.UnmarshalStrict(configBytes, &cfg)
+	require.NoError(t, err, "failed to unmarshal merged config into app.Config")
+
+	return cfg
+}
 
 // applyConfigOverlay applies a config overlay file onto the shared config.yaml file,
 // with optional template rendering. The overlay is merged onto the existing shared config

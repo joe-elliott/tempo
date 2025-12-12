@@ -33,16 +33,12 @@ func TestEncodings(t *testing.T) {
 				_, err := info.ConstructTraceFromEpoch()
 				require.NoError(t, err)
 
-				liveStore := h.Services[util.ServiceLiveStoreZoneA]
-				err = liveStore.WaitSumMetricsWithOptions(e2e.Greater(0),
-					[]string{"tempo_live_store_traces_created_total"},
-					e2e.WaitMissingMetrics,
-				)
-				require.NoError(t, err)
+				h.WaitTracesQueryable(t, 1)
 
 				util.QueryAndAssertTrace(t, h.HTTPClient, info)
 
 				// wait for live store to complete the block
+				liveStore := h.Services[util.ServiceLiveStoreZoneA]
 				err = liveStore.WaitSumMetricsWithOptions(e2e.Greater(0),
 					[]string{"tempo_live_store_blocks_completed_total"},
 					e2e.WaitMissingMetrics,

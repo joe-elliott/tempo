@@ -57,8 +57,7 @@ func TestTagEndpoints(t *testing.T) {
 		}
 
 		// wait for the 2 traces to be written to the WAL
-		liveStoreZoneA := h.Services[util.ServiceLiveStoreZoneA]
-		require.NoError(t, liveStoreZoneA.WaitSumMetricsWithOptions(e2e.Equals(4), []string{"tempo_live_store_traces_created_total"}, e2e.WaitMissingMetrics))
+		h.WaitTracesQueryable(t, 4)
 
 		tagsTestCases := buildSearchTagsV2TestCases(batches)
 		tagValuesTestCases := buildSearchTagValuesV2TestCases(batches)
@@ -77,7 +76,7 @@ func TestTagEndpoints(t *testing.T) {
 		}
 
 		// wait for 4 objects to be written to the backend
-		require.NoError(t, queryFrontend.WaitSumMetricsWithOptions(e2e.Equals(4), []string{"tempodb_backend_objects_total"}, e2e.WaitMissingMetrics)) // jpe - use as the gate for restarting for backend reads
+		h.WaitTracesWrittenToBackend(t, 4) // jpe - use as the gate for restarting for backend reads
 
 		frontend := h.Services[util.ServiceQueryFrontend]
 		require.NoError(t, h.RestartServiceWithConfigOverlay(t, frontend, "../util/config-query-backend.yaml"))
@@ -422,8 +421,7 @@ func TestTraceByIDandTraceQL(t *testing.T) {
 			require.NoError(t, info.EmitAllBatches(h.JaegerExporter))
 		}
 
-		liveStoreZoneA := h.Services[util.ServiceLiveStoreZoneA]
-		require.NoError(t, liveStoreZoneA.WaitSumMetricsWithOptions(e2e.Equals(float64(countTraces)), []string{"tempo_live_store_traces_created_total"}, e2e.WaitMissingMetrics))
+		h.WaitTracesQueryable(t, countTraces)
 
 		grpcClient, err := util.NewSearchGRPCClient(context.Background(), h.QueryFrontendGRPCEndpoint)
 		require.NoError(t, err)
@@ -435,8 +433,8 @@ func TestTraceByIDandTraceQL(t *testing.T) {
 			util.SearchStreamAndAssertTrace(t, context.Background(), grpcClient, i, now.Add(-time.Hour).Unix(), now.Add(time.Hour).Unix())
 		}
 
+		h.WaitTracesWrittenToBackend(t, countTraces)
 		queryFrontend := h.Services[util.ServiceQueryFrontend]
-		require.NoError(t, queryFrontend.WaitSumMetricsWithOptions(e2e.Equals(float64(countTraces)), []string{"tempodb_backend_objects_total"}, e2e.WaitMissingMetrics))
 		require.NoError(t, h.RestartServiceWithConfigOverlay(t, queryFrontend, "../util/config-query-backend.yaml"))
 
 		grpcClient, err = util.NewSearchGRPCClient(context.Background(), h.QueryFrontendGRPCEndpoint)
@@ -458,8 +456,7 @@ func TestStreamingSearch_badRequest(t *testing.T) {
 		require.NoError(t, h.JaegerExporter.EmitBatch(context.Background(), batch))
 
 		// Wait for the traces to be written to the WAL
-		liveStoreZoneA := h.Services[util.ServiceLiveStoreZoneA]
-		require.NoError(t, liveStoreZoneA.WaitSumMetricsWithOptions(e2e.Equals(1), []string{"tempo_live_store_traces_created_total"}, e2e.WaitMissingMetrics))
+		h.WaitTracesQueryable(t, 1)
 
 		// Create gRPC client
 		c, err := util.NewSearchGRPCClient(context.Background(), h.QueryFrontendGRPCEndpoint)

@@ -15,7 +15,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jaegertracing/jaeger-idl/thrift-gen/jaeger"
 
-	"github.com/grafana/e2e"
 	"github.com/grafana/tempo/integration/util"
 	"github.com/grafana/tempo/pkg/httpclient"
 	"github.com/grafana/tempo/pkg/tempopb"
@@ -100,8 +99,7 @@ func TestQueryRangeExemplars(t *testing.T) {
 			}
 		}
 
-		liveStoreZoneA := h.Services[util.ServiceLiveStoreZoneA]
-		require.NoError(t, liveStoreZoneA.WaitSumMetricsWithOptions(e2e.Equals(float64(tracesSent)), []string{"tempo_live_store_traces_created_total"}, e2e.WaitMissingMetrics))
+		h.WaitTracesQueryable(t, tracesSent)
 
 		for _, exemplarsCase := range []struct {
 			name              string
@@ -536,8 +534,7 @@ func TestQueryRangeSingleTrace(t *testing.T) {
 		// Emit a single trace
 		require.NoError(t, jaegerClient.EmitBatch(context.Background(), util.MakeThriftBatch()))
 
-		liveStoreZoneA := h.Services[util.ServiceLiveStoreZoneA]
-		require.NoError(t, liveStoreZoneA.WaitSumMetricsWithOptions(e2e.Equals(float64(1)), []string{"tempo_live_store_traces_created_total"}, e2e.WaitMissingMetrics))
+		h.WaitTracesQueryable(t, 1)
 
 		// Query the trace by count. As we have only one trace, we should get one dot with value 1
 		query := "{} | count_over_time()"
@@ -581,8 +578,7 @@ func TestQueryRangeMaxSeries(t *testing.T) {
 			}
 		}
 
-		liveStoreZoneA := h.Services[util.ServiceLiveStoreZoneA]
-		require.NoError(t, liveStoreZoneA.WaitSumMetricsWithOptions(e2e.Equals(float64(tracesSent)), []string{"tempo_live_store_traces_created_total"}, e2e.WaitMissingMetrics))
+		h.WaitTracesQueryable(t, tracesSent)
 
 		query := "{} | rate() by (span:id)"
 		urlStr := fmt.Sprintf(
@@ -641,8 +637,7 @@ func TestQueryRangeMaxSeriesDisabled(t *testing.T) {
 		}
 
 		// Wait for traces to be flushed to blocks. spanCount happens to make traces count
-		liveStoreZoneA := h.Services[util.ServiceLiveStoreZoneA]
-		require.NoError(t, liveStoreZoneA.WaitSumMetricsWithOptions(e2e.Equals(float64(spanCount)), []string{"tempo_live_store_traces_created_total"}, e2e.WaitMissingMetrics))
+		h.WaitTracesQueryable(t, spanCount)
 
 		query := "{} | rate() by (span:id)"
 		urlStr := fmt.Sprintf(
@@ -702,11 +697,7 @@ func TestQueryRangeTypeHandling(t *testing.T) {
 		require.NoError(t, jaegerClient.EmitBatch(ctx, t2))
 
 		// Wait for traces to be flushed to blocks
-		liveStoreZoneA := h.Services[util.ServiceLiveStoreZoneA]
-		require.NoError(t, liveStoreZoneA.WaitSumMetricsWithOptions(e2e.Equals(float64(2)), []string{"tempo_live_store_traces_created_total"}, e2e.WaitMissingMetrics))
-
-		// Wait for the traces to be written to the WAL
-		time.Sleep(time.Second * 4)
+		h.WaitTracesQueryable(t, 2)
 
 		query := "{span.foo != nil} | rate() by (span.foo)"
 		urlStr := fmt.Sprintf(

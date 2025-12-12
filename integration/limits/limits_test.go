@@ -206,19 +206,14 @@ func TestQueryLimits(t *testing.T) {
 		// now try to query it back. this should fail b/c the trace is too large
 		client := h.HTTPClient
 
-		// wait for live store to ingest traces
-		liveStore := h.Services[util.ServiceLiveStoreZoneA]
-		err := liveStore.WaitSumMetricsWithOptions(e2e.Greater(0),
-			[]string{"tempo_live_store_traces_created_total"},
-			e2e.WaitMissingMetrics,
-		)
-		require.NoError(t, err)
+		h.WaitTracesQueryable(t, 1)
 
-		_, err = client.QueryTrace(tempoUtil.TraceIDToHexString(traceID[:]))
+		_, err := client.QueryTrace(tempoUtil.TraceIDToHexString(traceID[:]))
 		require.ErrorContains(t, err, trace.ErrTraceTooLarge.Error())
 		require.ErrorContains(t, err, "failed with response: 422") // confirm frontend returns 422
 
 		// wait for live store to complete the block
+		liveStore := h.Services[util.ServiceLiveStoreZoneA]
 		err = liveStore.WaitSumMetricsWithOptions(e2e.Greater(0),
 			[]string{"tempo_live_store_blocks_completed_total"},
 			e2e.WaitMissingMetrics,
@@ -269,12 +264,7 @@ func TestLimitsPartialSuccess(t *testing.T) {
 		require.NoError(t, h.OTLPExporter.Shutdown(context.Background()))
 
 		// wait for live store to ingest traces
-		liveStore := h.Services[util.ServiceLiveStoreZoneA]
-		err = liveStore.WaitSumMetricsWithOptions(e2e.Greater(0),
-			[]string{"tempo_live_store_traces_created_total"},
-			e2e.WaitMissingMetrics,
-		)
-		require.NoError(t, err)
+		h.WaitTracesQueryable(t, len(traceIDs))
 
 		// query for the traces that didn't trigger an error
 		client := h.HTTPClient
@@ -288,6 +278,7 @@ func TestLimitsPartialSuccess(t *testing.T) {
 
 		// test metrics
 		// 3 traces with trace_too_large each with 4+5+6 spans
+		liveStore := h.Services[util.ServiceLiveStoreZoneA]
 		err = liveStore.WaitSumMetricsWithOptions(e2e.Equals(15),
 			[]string{"tempo_discarded_spans_total"},
 			e2e.WithLabelMatchers(labels.MustNewMatcher(labels.MatchEqual, "reason", "trace_too_large")),
