@@ -1,21 +1,14 @@
 package api
 
 import (
-	"context"
 	"fmt"
-	"io"
 	"math"
-	"net/http"
-	"net/url"
-	"strings"
 	"testing"
 	"time"
 
-	"github.com/gogo/protobuf/jsonpb"
 	"github.com/google/uuid"
 	"github.com/jaegertracing/jaeger-idl/thrift-gen/jaeger"
 
-	"github.com/grafana/e2e"
 	"github.com/grafana/tempo/integration/util"
 	"github.com/grafana/tempo/pkg/httpclient"
 	"github.com/grafana/tempo/pkg/tempopb"
@@ -59,8 +52,6 @@ func TestQueryRangeExemplars(t *testing.T) {
 	util.WithTempoHarness(t, util.TestHarnessConfig{
 		DeploymentMode: util.DeploymentModeSingleBinary,
 	}, func(h *util.TempoHarness) {
-		jaegerClient := h.JaegerExporter
-
 		ticker := time.NewTicker(500 * time.Millisecond)
 		defer ticker.Stop()
 		timer := time.NewTimer(10 * time.Second)
@@ -73,35 +64,34 @@ func TestQueryRangeExemplars(t *testing.T) {
 		for {
 			select {
 			case <-ticker.C:
-				require.NoError(t, jaegerClient.EmitBatch(context.Background(),
+				h.WriteJaegerBatch(t,
 					util.MakeThriftBatchWithSpanCountAttributeAndName(
 						1, "my operation",
 						"res_val", "span_val",
 						"res_attr", "span_attr",
 					),
-				))
-				require.NoError(t, jaegerClient.EmitBatch(context.Background(),
+				)
+				h.WriteJaegerBatch(t,
 					util.MakeThriftBatchWithSpanCountAttributeAndName(
 						1, "my operation",
 						"res_val2", "span_val2",
 						"res_attr", "span_attr",
 					),
-				))
-				require.NoError(t, jaegerClient.EmitBatch(context.Background(),
+				)
+				h.WriteJaegerBatch(t,
 					util.MakeThriftBatchWithSpanCountAttributeAndName(
 						1, "operation with high cardinality",
 						uuid.New().String(), uuid.New().String(),
 						"res_high_cardinality", "span_high_cardinality",
 					),
-				))
+				)
 				tracesSent += 3
 			case <-timer.C:
 				break sendLoop
 			}
 		}
 
-		liveStoreZoneA := h.Services[util.ServiceLiveStoreZoneA]
-		require.NoError(t, liveStoreZoneA.WaitSumMetricsWithOptions(e2e.Equals(float64(tracesSent)), []string{"tempo_live_store_traces_created_total"}, e2e.WaitMissingMetrics))
+		h.WaitTracesQueryable(t, tracesSent)
 
 		for _, exemplarsCase := range []struct {
 			name              string
@@ -154,7 +144,7 @@ func TestQueryRangeExemplars(t *testing.T) {
 						Query:     query,
 						Exemplars: exemplarsCase.exemplars,
 					}
-					queryRangeRes, err := callQueryRange(h.HTTPClient, req)
+					queryRangeRes, err := callQueryRange(h.APIClientHTTP(""), req)
 					require.NoError(t, err)
 					require.NotNil(t, queryRangeRes)
 					require.GreaterOrEqual(t, len(queryRangeRes.GetSeries()), 1)
@@ -232,7 +222,7 @@ func TestQueryRangeExemplars(t *testing.T) {
 					Query:     testCase.query,
 					Exemplars: 100,
 				}
-				queryRangeRes, err := callQueryRange(h.HTTPClient, req)
+				queryRangeRes, err := callQueryRange(h.APIClientHTTP(""), req)
 				require.NoError(t, err)
 				require.NotNil(t, queryRangeRes)
 				require.Equal(t, len(queryRangeRes.GetSeries()), 3) // value 1, value 2 and nil (high cardinality's span has no such attribute)
@@ -286,7 +276,7 @@ func TestQueryRangeExemplars(t *testing.T) {
 		} {
 			t.Run(name, func(t *testing.T) {
 				req := req
-				_, err := callQueryRange(h.HTTPClient, req)
+				_, err := callQueryRange(h.APIClientHTTP(""), req)
 				require.ErrorContains(t, err, "response: 400")
 			})
 		}
@@ -297,7 +287,7 @@ func TestQueryRangeExemplars(t *testing.T) {
 			req.SetDefaults()
 			req.Step = "35ms"
 
-			_, err := callQueryRange(h.HTTPClient, req)
+			_, err := callQueryRange(h.APIClientHTTP(""), req)
 			require.ErrorContains(t, err, "step of 35ms is too small, minimum step for given range is 36ms")
 		})
 
@@ -309,7 +299,7 @@ func TestQueryRangeExemplars(t *testing.T) {
 			`{span.randomattr = "doesnotexist"} | count_over_time()`,
 		} {
 			t.Run(query, func(t *testing.T) {
-				queryRangeRes, err := callQueryRange(h.HTTPClient, queryRangeRequest{Query: query, Exemplars: 100})
+				queryRangeRes, err := callQueryRange(h.APIClientHTTP(""), queryRangeRequest{Query: query, Exemplars: 100})
 				require.NoError(t, err)
 				require.NotNil(t, queryRangeRes)
 				// it has time series but they are empty and has no exemplars
@@ -369,14 +359,14 @@ func TestQueryRangeExemplars(t *testing.T) {
 					Step:  testCase.step,
 				}
 
-				queryRangeRes, err := callQueryRange(h.HTTPClient, req)
+				queryRangeRes, err := callQueryRange(h.APIClientHTTP(""), req)
 				require.NoError(t, err)
 				require.NotNil(t, queryRangeRes)
 				require.Equal(t, 1, len(queryRangeRes.GetSeries()))
 
 				expectedValue := testCase.converter(queryRangeRes.Series[0].Samples)
 
-				instantQueryRes, err := callInstantQuery(h.HTTPClient, req)
+				instantQueryRes, err := callInstantQuery(h.APIClientHTTP(""), req)
 				require.NoError(t, err)
 				require.NotNil(t, instantQueryRes)
 				require.Equal(t, 1, len(instantQueryRes.GetSeries()))
@@ -393,7 +383,7 @@ func TestQueryRangeExemplars(t *testing.T) {
 
 			countReq := req
 			countReq.Query = "{} | count_over_time()"
-			countRes, err := callInstantQuery(h.HTTPClient, countReq)
+			countRes, err := callInstantQuery(h.APIClientHTTP(""), countReq)
 			require.NoError(t, err)
 			require.NotNil(t, countRes)
 			require.Equal(t, 1, len(countRes.GetSeries()))
@@ -401,12 +391,12 @@ func TestQueryRangeExemplars(t *testing.T) {
 
 			sumReq := req
 			sumReq.Query = "{} | sum_over_time(duration)"
-			sumRes, err := callInstantQuery(h.HTTPClient, sumReq)
+			sumRes, err := callInstantQuery(h.APIClientHTTP(""), sumReq)
 			require.NotNil(t, sumRes)
 			require.Equal(t, 1, len(sumRes.GetSeries()))
 			sum := sumRes.GetSeries()[0].Value
 
-			res, err := callInstantQuery(h.HTTPClient, req)
+			res, err := callInstantQuery(h.APIClientHTTP(""), req)
 			require.NoError(t, err)
 			require.NotNil(t, res)
 			require.Equal(t, 1, len(res.GetSeries()))
@@ -457,7 +447,7 @@ func TestQueryRangeExemplars(t *testing.T) {
 					Step:  "1m",
 				}
 
-				instantQueryRes, err := callInstantQuery(h.HTTPClient, req)
+				instantQueryRes, err := callInstantQuery(h.APIClientHTTP(""), req)
 				require.NoError(t, err)
 				require.NotNil(t, instantQueryRes)
 				require.Equal(t, testCase.expectedNum, len(instantQueryRes.GetSeries()))
@@ -485,7 +475,7 @@ func TestQueryRangeExemplars(t *testing.T) {
 					noDefault: true,
 				}
 
-				queryRangeRes, err := callQueryRange(h.HTTPClient, req)
+				queryRangeRes, err := callQueryRange(h.APIClientHTTP(""), req)
 				require.NoError(t, err)
 				require.NotNil(t, queryRangeRes)
 				series := queryRangeRes.GetSeries()
@@ -531,17 +521,14 @@ func TestQueryRangeSingleTrace(t *testing.T) {
 	util.WithTempoHarness(t, util.TestHarnessConfig{
 		DeploymentMode: util.DeploymentModeSingleBinary,
 	}, func(h *util.TempoHarness) {
-		jaegerClient := h.JaegerExporter
-
 		// Emit a single trace
-		require.NoError(t, jaegerClient.EmitBatch(context.Background(), util.MakeThriftBatch()))
+		h.WriteJaegerBatch(t, util.MakeThriftBatch())
 
-		liveStoreZoneA := h.Services[util.ServiceLiveStoreZoneA]
-		require.NoError(t, liveStoreZoneA.WaitSumMetricsWithOptions(e2e.Equals(float64(1)), []string{"tempo_live_store_traces_created_total"}, e2e.WaitMissingMetrics))
+		h.WaitTracesQueryable(t, 1)
 
 		// Query the trace by count. As we have only one trace, we should get one dot with value 1
 		query := "{} | count_over_time()"
-		queryRangeRes, err := callQueryRange(h.HTTPClient, queryRangeRequest{Query: query, Exemplars: 100})
+		queryRangeRes, err := callQueryRange(h.APIClientHTTP(""), queryRangeRequest{Query: query, Exemplars: 100})
 		require.NoError(t, err)
 		require.NotNil(t, queryRangeRes)
 		require.Equal(t, len(queryRangeRes.GetSeries()), 1)
@@ -562,8 +549,6 @@ func TestQueryRangeMaxSeries(t *testing.T) {
 		ConfigOverlay:  configQueryRangeMaxSeries,
 		DeploymentMode: util.DeploymentModeSingleBinary, // jpe - should this be default?
 	}, func(h *util.TempoHarness) {
-		jaegerClient := h.JaegerExporter
-
 		ticker := time.NewTicker(500 * time.Millisecond)
 		defer ticker.Stop()
 		timer := time.NewTimer(5 * time.Second)
@@ -574,39 +559,18 @@ func TestQueryRangeMaxSeries(t *testing.T) {
 		for {
 			select {
 			case <-ticker.C:
-				require.NoError(t, jaegerClient.EmitBatch(context.Background(), util.MakeThriftBatch()))
+				h.WriteJaegerBatch(t, util.MakeThriftBatch())
 				tracesSent++
 			case <-timer.C:
 				break sendLoop
 			}
 		}
 
-		liveStoreZoneA := h.Services[util.ServiceLiveStoreZoneA]
-		require.NoError(t, liveStoreZoneA.WaitSumMetricsWithOptions(e2e.Equals(float64(tracesSent)), []string{"tempo_live_store_traces_created_total"}, e2e.WaitMissingMetrics))
+		h.WaitTracesQueryable(t, tracesSent)
 
 		query := "{} | rate() by (span:id)"
-		urlStr := fmt.Sprintf(
-			"http://%s/api/metrics/query_range?q=%s&start=%d&end=%d&step=%s",
-			h.QueryFrontendHTTPEndpoint,
-			url.QueryEscape(query),
-			time.Now().Add(-5*time.Minute).UnixNano(),
-			time.Now().UnixNano(),
-			"5s",
-		)
-
-		req, err := http.NewRequest(http.MethodGet, urlStr, nil)
-		require.NoError(t, err)
-
-		res, err := http.DefaultClient.Do(req)
-		require.NoError(t, err)
-
-		// Read body
-		body, err := io.ReadAll(res.Body)
-		require.NoError(t, err)
-
-		queryRangeRes := &tempopb.QueryRangeResponse{}
-		readBody := strings.NewReader(string(body))
-		err = new(jsonpb.Unmarshaler).Unmarshal(readBody, queryRangeRes)
+		apiClient := h.APIClientHTTP("")
+		queryRangeRes, err := apiClient.MetricsQueryRange(query, time.Now().Add(-5*time.Minute).UnixNano(), time.Now().UnixNano(), "5s", 100)
 		require.NoError(t, err)
 		require.NotNil(t, queryRangeRes)
 
@@ -622,8 +586,6 @@ func TestQueryRangeMaxSeriesDisabled(t *testing.T) {
 		ConfigOverlay:  configQueryRangeMaxSeriesDisabled,
 		DeploymentMode: util.DeploymentModeSingleBinary,
 	}, func(h *util.TempoHarness) {
-		jaegerClient := h.JaegerExporter
-
 		ticker := time.NewTicker(500 * time.Millisecond)
 		defer ticker.Stop()
 		timer := time.NewTimer(5 * time.Second)
@@ -633,7 +595,7 @@ func TestQueryRangeMaxSeriesDisabled(t *testing.T) {
 		for {
 			select {
 			case <-ticker.C:
-				require.NoError(t, jaegerClient.EmitBatch(context.Background(), util.MakeThriftBatch()))
+				h.WriteJaegerBatch(t, util.MakeThriftBatch())
 				spanCount++
 			case <-timer.C:
 				break sendLoop
@@ -641,32 +603,11 @@ func TestQueryRangeMaxSeriesDisabled(t *testing.T) {
 		}
 
 		// Wait for traces to be flushed to blocks. spanCount happens to make traces count
-		liveStoreZoneA := h.Services[util.ServiceLiveStoreZoneA]
-		require.NoError(t, liveStoreZoneA.WaitSumMetricsWithOptions(e2e.Equals(float64(spanCount)), []string{"tempo_live_store_traces_created_total"}, e2e.WaitMissingMetrics))
+		h.WaitTracesQueryable(t, spanCount)
 
 		query := "{} | rate() by (span:id)"
-		urlStr := fmt.Sprintf(
-			"http://%s/api/metrics/query_range?q=%s&start=%d&end=%d&step=%s",
-			h.QueryFrontendHTTPEndpoint,
-			url.QueryEscape(query),
-			time.Now().Add(-5*time.Minute).UnixNano(),
-			time.Now().UnixNano(),
-			"5s",
-		)
-
-		req, err := http.NewRequest(http.MethodGet, urlStr, nil)
-		require.NoError(t, err)
-
-		res, err := http.DefaultClient.Do(req)
-		require.NoError(t, err)
-
-		// Read body
-		body, err := io.ReadAll(res.Body)
-		require.NoError(t, err)
-
-		queryRangeRes := &tempopb.QueryRangeResponse{}
-		readBody := strings.NewReader(string(body))
-		err = new(jsonpb.Unmarshaler).Unmarshal(readBody, queryRangeRes)
+		apiClient := h.APIClientHTTP("")
+		queryRangeRes, err := apiClient.MetricsQueryRange(query, time.Now().Add(-5*time.Minute).UnixNano(), time.Now().UnixNano(), "5s", 100)
 		require.NoError(t, err)
 		require.NotNil(t, queryRangeRes)
 
@@ -680,9 +621,6 @@ func TestQueryRangeTypeHandling(t *testing.T) {
 	util.WithTempoHarness(t, util.TestHarnessConfig{
 		DeploymentMode: util.DeploymentModeSingleBinary,
 	}, func(h *util.TempoHarness) {
-		ctx := context.Background()
-		jaegerClient := h.JaegerExporter
-
 		// Emit spans where the attribute names but the values are
 		// string and int with the same textual representation.
 		t1 := util.MakeThriftBatch()
@@ -691,7 +629,7 @@ func TestQueryRangeTypeHandling(t *testing.T) {
 			VType: jaeger.TagType_STRING,
 			VStr:  strptr("123"),
 		})
-		require.NoError(t, jaegerClient.EmitBatch(ctx, t1))
+		h.WriteJaegerBatch(t, t1)
 
 		t2 := util.MakeThriftBatch()
 		t2.Spans[0].Tags = append(t2.Spans[0].Tags, &jaeger.Tag{
@@ -699,38 +637,14 @@ func TestQueryRangeTypeHandling(t *testing.T) {
 			VType: jaeger.TagType_LONG,
 			VLong: int64ptr(123),
 		})
-		require.NoError(t, jaegerClient.EmitBatch(ctx, t2))
+		h.WriteJaegerBatch(t, t2)
 
 		// Wait for traces to be flushed to blocks
-		liveStoreZoneA := h.Services[util.ServiceLiveStoreZoneA]
-		require.NoError(t, liveStoreZoneA.WaitSumMetricsWithOptions(e2e.Equals(float64(2)), []string{"tempo_live_store_traces_created_total"}, e2e.WaitMissingMetrics))
-
-		// Wait for the traces to be written to the WAL
-		time.Sleep(time.Second * 4)
+		h.WaitTracesQueryable(t, 2)
 
 		query := "{span.foo != nil} | rate() by (span.foo)"
-		urlStr := fmt.Sprintf(
-			"http://%s/api/metrics/query_range?q=%s&start=%d&end=%d&step=%s",
-			h.QueryFrontendHTTPEndpoint,
-			url.QueryEscape(query),
-			time.Now().Add(-5*time.Minute).UnixNano(),
-			time.Now().UnixNano(),
-			"5s",
-		)
-
-		req, err := http.NewRequest(http.MethodGet, urlStr, nil)
-		require.NoError(t, err)
-
-		res, err := http.DefaultClient.Do(req)
-		require.NoError(t, err)
-
-		// Read body
-		body, err := io.ReadAll(res.Body)
-		require.NoError(t, err)
-
-		queryRangeRes := &tempopb.QueryRangeResponse{}
-		readBody := strings.NewReader(string(body))
-		err = new(jsonpb.Unmarshaler).Unmarshal(readBody, queryRangeRes)
+		apiClient := h.APIClientHTTP("")
+		queryRangeRes, err := apiClient.MetricsQueryRange(query, time.Now().Add(-5*time.Minute).UnixNano(), time.Now().UnixNano(), "5s", 100)
 		require.NoError(t, err)
 		require.NotNil(t, queryRangeRes)
 

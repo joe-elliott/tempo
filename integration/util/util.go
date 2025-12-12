@@ -3,23 +3,16 @@ package util
 // Collection of utilities to share between our various load tests
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"html/template"
 	"io"
 	"math/rand"
-	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
-	"strings"
 	"testing"
 	"time"
 
-	"github.com/grafana/dskit/backoff"
 	"github.com/grafana/e2e"
 	"github.com/jaegertracing/jaeger-idl/proto-gen/api_v2"
 	thrift "github.com/jaegertracing/jaeger-idl/thrift-gen/jaeger"
@@ -50,311 +43,9 @@ import (
 )
 
 const (
-	image               = "tempo:latest"
-	debugImage          = "tempo-debug:latest"
-	queryImage          = "tempo-query:latest"
-	jaegerImage         = "jaegertracing/jaeger-query:1.64.0"
-	prometheusImage     = "prom/prometheus:latest"
 	xScopeOrgIDHeader   = "x-scope-orgid"
 	authorizationHeader = "authorization"
 )
-
-// GetExtraArgs returns the extra args to pass to the Docker command used to run Tempo.
-func GetExtraArgs() []string {
-	// Get extra args from the TEMPO_EXTRA_ARGS env variable
-	// falling back to an empty list
-	if os.Getenv("TEMPO_EXTRA_ARGS") != "" {
-		return strings.Fields(os.Getenv("TEMPO_EXTRA_ARGS"))
-	}
-
-	return nil
-}
-
-func buildArgsWithExtra(args, extraArgs []string) []string {
-	if len(extraArgs) > 0 {
-		args = append(args, extraArgs...)
-	}
-	if envExtraArgs := GetExtraArgs(); len(envExtraArgs) > 0 {
-		args = append(args, envExtraArgs...)
-	}
-
-	return args
-}
-
-func NewTempoAllInOne(extraArgs ...string) *e2e.HTTPService {
-	return NewTempoAllInOneWithReadinessProbe(e2e.NewHTTPReadinessProbe(3200, "/ready", 200, 299), extraArgs...)
-}
-
-func NewTempoAllInOneDebug(extraArgs ...string) *e2e.HTTPService {
-	rp := e2e.NewHTTPReadinessProbe(3200, "/ready", 200, 299)
-	args := []string{"-config.file=" + filepath.Join(e2e.ContainerSharedDir, "config.yaml")}
-	args = buildArgsWithExtra(args, extraArgs)
-
-	s := e2e.NewHTTPService(
-		"tempo",
-		debugImage,
-		e2e.NewCommand("", args...),
-		rp,
-		3200,  // http all things
-		3201,  // http all things
-		9095,  // grpc tempo
-		14250, // jaeger grpc ingest
-		9411,  // zipkin ingest (used by load)
-		4317,  // otlp grpc
-		4318,  // OTLP HTTP
-		2345,  // delve port
-	)
-	env := map[string]string{
-		"DEBUG_BLOCK": "1",
-	}
-	s.SetEnvVars(env)
-
-	s.SetBackoff(TempoBackoff())
-	return s
-}
-
-func NewTempoAllInOneWithReadinessProbe(rp e2e.ReadinessProbe, extraArgs ...string) *e2e.HTTPService { // jpe - get single binary working? and then add tests?
-	args := []string{"-config.file=" + filepath.Join(e2e.ContainerSharedDir, "config.yaml"), "-target=all-3.0"}
-	args = buildArgsWithExtra(args, extraArgs)
-
-	s := e2e.NewHTTPService(
-		"tempo",
-		image,
-		e2e.NewCommandWithoutEntrypoint("/tempo", args...),
-		rp,
-		3200,  // http all things
-		3201,  // http all things
-		9095,  // grpc tempo
-		14250, // jaeger grpc ingest
-		9411,  // zipkin ingest (used by load)
-		4317,  // otlp grpc
-		4318,  // OTLP HTTP
-	)
-
-	s.SetBackoff(TempoBackoff())
-
-	return s
-}
-
-func NewTempoDistributor(extraArgs ...string) *e2e.HTTPService { // jpe -m make internal? same Q for all below
-	return NewNamedTempoDistributor("distributor", extraArgs...)
-}
-
-func NewNamedTempoDistributor(name string, extraArgs ...string) *e2e.HTTPService { // jpe - remove "Tempo" from all funcs
-	args := []string{"-config.file=" + filepath.Join(e2e.ContainerSharedDir, "config.yaml"), "-target=distributor"}
-	args = buildArgsWithExtra(args, extraArgs)
-
-	s := e2e.NewHTTPService(
-		name,
-		image,
-		e2e.NewCommandWithoutEntrypoint("/tempo", args...),
-		e2e.NewHTTPReadinessProbe(3200, "/ready", 200, 299),
-		3200,
-		14250, // jaeger grpc ingest
-		4317,  // otlp grpc
-		4318,  // otlp http
-		9411,  // zipkin ingest
-	)
-
-	s.SetBackoff(TempoBackoff())
-
-	return s
-}
-
-func NewTempoIngester(replica int, extraArgs ...string) *e2e.HTTPService { // jpe - remove?
-	return NewNamedTempoIngester("ingester", replica, extraArgs...)
-}
-
-func NewNamedTempoIngester(name string, replica int, extraArgs ...string) *e2e.HTTPService {
-	args := []string{"-config.file=" + filepath.Join(e2e.ContainerSharedDir, "config.yaml"), "-target=ingester"}
-	args = buildArgsWithExtra(args, extraArgs)
-
-	s := e2e.NewHTTPService(
-		name+"-"+strconv.Itoa(replica),
-		image,
-		e2e.NewCommandWithoutEntrypoint("/tempo", args...),
-		e2e.NewHTTPReadinessProbe(3200, "/ready", 200, 299),
-		3200,
-	)
-
-	s.SetBackoff(TempoBackoff())
-
-	return s
-}
-
-func NewTempoMetricsGenerator(extraArgs ...string) *e2e.HTTPService {
-	args := []string{"-config.file=" + filepath.Join(e2e.ContainerSharedDir, "config.yaml"), "-target=metrics-generator"}
-	args = buildArgsWithExtra(args, extraArgs)
-
-	s := e2e.NewHTTPService(
-		"metrics-generator",
-		image,
-		e2e.NewCommandWithoutEntrypoint("/tempo", args...),
-		e2e.NewHTTPReadinessProbe(3200, "/ready", 200, 299),
-		3200,
-	)
-
-	s.SetBackoff(TempoBackoff())
-
-	return s
-}
-
-func NewTempoQueryFrontend(extraArgs ...string) *e2e.HTTPService {
-	return NewNamedTempoQueryFrontend("query-frontend", extraArgs...)
-}
-
-func NewNamedTempoQueryFrontend(name string, extraArgs ...string) *e2e.HTTPService {
-	args := []string{"-config.file=" + filepath.Join(e2e.ContainerSharedDir, "config.yaml"), "-target=query-frontend"}
-	args = buildArgsWithExtra(args, extraArgs)
-
-	s := e2e.NewHTTPService(
-		name,
-		image,
-		e2e.NewCommandWithoutEntrypoint("/tempo", args...),
-		e2e.NewHTTPReadinessProbe(3200, "/ready", 200, 299),
-		3200,
-	)
-
-	s.SetBackoff(TempoBackoff())
-
-	return s
-}
-
-func NewTempoQuerier(extraArgs ...string) *e2e.HTTPService {
-	return NewNamedTempoQuerier("querier", extraArgs...)
-}
-
-func NewNamedTempoQuerier(name string, extraArgs ...string) *e2e.HTTPService {
-	args := []string{"-config.file=" + filepath.Join(e2e.ContainerSharedDir, "config.yaml"), "-target=querier"}
-	args = buildArgsWithExtra(args, extraArgs)
-
-	s := e2e.NewHTTPService(
-		name,
-		image,
-		e2e.NewCommandWithoutEntrypoint("/tempo", args...),
-		e2e.NewHTTPReadinessProbe(3200, "/ready", 200, 299),
-		3200,
-	)
-
-	s.SetBackoff(TempoBackoff())
-
-	return s
-}
-
-func NewTempoBlockBuilder(replica int, extraArgs ...string) *e2e.HTTPService {
-	return NewNamedTempoBlockBuilder("block-builder", replica, extraArgs...)
-}
-
-func NewNamedTempoBlockBuilder(name string, replica int, extraArgs ...string) *e2e.HTTPService {
-	args := []string{"-config.file=" + filepath.Join(e2e.ContainerSharedDir, "config.yaml"), "-target=block-builder"}
-	args = buildArgsWithExtra(args, extraArgs)
-
-	s := e2e.NewHTTPService(
-		name+"-"+strconv.Itoa(replica),
-		image,
-		e2e.NewCommandWithoutEntrypoint("/tempo", args...),
-		e2e.NewHTTPReadinessProbe(3200, "/ready", 200, 299),
-		3200,
-	)
-
-	s.SetBackoff(TempoBackoff())
-
-	return s
-}
-
-func NewTempoLiveStore(replica int, extraArgs ...string) *e2e.HTTPService {
-	return NewNamedTempoLiveStore("live-store", replica, extraArgs...)
-}
-
-func NewNamedTempoLiveStore(name string, replica int, extraArgs ...string) *e2e.HTTPService {
-	args := []string{"-config.file=" + filepath.Join(e2e.ContainerSharedDir, "config.yaml"), "-target=live-store"}
-	args = buildArgsWithExtra(args, extraArgs)
-
-	s := e2e.NewHTTPService(
-		name+"-"+strconv.Itoa(replica),
-		image,
-		e2e.NewCommandWithoutEntrypoint("/tempo", args...),
-		e2e.NewHTTPReadinessProbe(3200, "/ready", 200, 299),
-		3200,
-	)
-	s.SetBackoff(TempoBackoff())
-
-	return s
-}
-
-func NewTempoScalableSingleBinary(replica int, extraArgs ...string) *e2e.HTTPService { // jpe - remove?
-	args := []string{"-config.file=" + filepath.Join(e2e.ContainerSharedDir, "config.yaml"), "-target=scalable-single-binary", "-querier.frontend-address=tempo-" + strconv.Itoa(replica) + ":9095"}
-	args = buildArgsWithExtra(args, extraArgs)
-
-	s := e2e.NewHTTPService(
-		"tempo-"+strconv.Itoa(replica),
-		image,
-		e2e.NewCommandWithoutEntrypoint("/tempo", args...),
-		e2e.NewHTTPReadinessProbe(3200, "/ready", 200, 299),
-		3200,  // http all things
-		14250, // jaeger grpc ingest,
-		4317,
-		// 9411,  // zipkin ingest (used by load)
-	)
-
-	s.SetBackoff(TempoBackoff())
-
-	return s
-}
-
-func NewTempoQuery() *e2e.HTTPService {
-	args := []string{
-		"-config=" + filepath.Join(e2e.ContainerSharedDir, "config-tempo-query.yaml"),
-	}
-
-	s := e2e.NewHTTPService(
-		"tempo-query",
-		queryImage,
-		e2e.NewCommandWithoutEntrypoint("/tempo-query", args...),
-		e2e.NewTCPReadinessProbe(7777),
-		7777,
-	)
-
-	s.SetBackoff(TempoBackoff())
-	return s
-}
-
-func NewTempoTarget(target string, configFile string) *e2e.HTTPService {
-	args := []string{
-		"-config.file=" + filepath.Join(e2e.ContainerSharedDir, configFile),
-		"-target=" + target,
-	}
-
-	s := e2e.NewHTTPService(
-		target,
-		image,
-		e2e.NewCommandWithoutEntrypoint("/tempo", args...),
-		e2e.NewHTTPReadinessProbe(3200, "/ready", 200, 299),
-		3200,
-	)
-
-	s.SetBackoff(TempoBackoff())
-
-	return s
-}
-
-func NewJaegerQuery() *e2e.HTTPService {
-	args := []string{
-		"--grpc-storage.server=tempo-query:7777",
-		"--span-storage.type=grpc",
-	}
-
-	s := e2e.NewHTTPService(
-		"jaeger-query",
-		jaegerImage,
-		e2e.NewCommandWithoutEntrypoint("/go/bin/query-linux", args...),
-		e2e.NewHTTPReadinessProbe(16686, "/", 200, 299),
-		16686,
-	)
-
-	s.SetBackoff(TempoBackoff())
-	return s
-}
 
 func CopyFileToSharedDir(s *e2e.Scenario, src, dst string) error {
 	content, err := os.ReadFile(src)
@@ -366,27 +57,8 @@ func CopyFileToSharedDir(s *e2e.Scenario, src, dst string) error {
 	return err
 }
 
-func CopyTemplateToSharedDir(s *e2e.Scenario, src, dst string, data any) (string, error) {
-	tmpl, err := template.ParseFiles(src)
-	if err != nil {
-		return "", err
-	}
-
-	var buf bytes.Buffer
-	err = tmpl.Execute(&buf, data)
-	if err != nil {
-		return "", err
-	}
-
-	return writeFileToSharedDir(s, dst, buf.Bytes())
-}
-
 func writeFileToSharedDir(s *e2e.Scenario, dst string, content []byte) (string, error) {
 	dst = filepath.Join(s.SharedDir(), dst)
-
-	// NOTE: since the integration tests are setup outside of the container
-	// before container execution, the permissions within the container must be
-	// able to read the configuration.
 
 	// Ensure the entire path of directories exists
 	err := os.MkdirAll(filepath.Dir(dst), os.ModePerm)
@@ -400,14 +72,6 @@ func writeFileToSharedDir(s *e2e.Scenario, dst string, content []byte) (string, 
 	}
 
 	return dst, nil
-}
-
-func TempoBackoff() backoff.Config {
-	return backoff.Config{
-		MinBackoff: 500 * time.Millisecond,
-		MaxBackoff: time.Second,
-		MaxRetries: 300, // Sometimes the CI is slow ¯\_(ツ)_/¯
-	}
 }
 
 func NewOtelGRPCExporterWithAuth(endpoint, orgID, basicAuthToken string, useTLS bool) (exporter.Traces, error) {
@@ -464,7 +128,7 @@ func NewOtelGRPCExporter(endpoint string) (exporter.Traces, error) {
 	return NewOtelGRPCExporterWithAuth(endpoint, "", "", false)
 }
 
-func NewSearchGRPCClient(ctx context.Context, endpoint string) (tempopb.StreamingQuerierClient, error) {
+func newSearchGRPCClient(ctx context.Context, endpoint string) (tempopb.StreamingQuerierClient, error) { // jpe - remove
 	return NewSearchGRPCClientWithCredentials(ctx, endpoint, insecure.NewCredentials())
 }
 
@@ -475,27 +139,6 @@ func NewSearchGRPCClientWithCredentials(ctx context.Context, endpoint string, cr
 	}
 
 	return tempopb.NewStreamingQuerierClient(clientConn), nil
-}
-
-func SearchAndAssertTrace(t *testing.T, client *httpclient.Client, info *tempoUtil.TraceInfo) { // jpe - remove, we don't support search in 3.0
-	expected, err := info.ConstructTraceFromEpoch()
-	require.NoError(t, err)
-
-	attr := tempoUtil.RandomAttrFromTrace(expected)
-
-	// NOTE: SearchTags doesn't include live traces anymore
-	// so don't check SearchTags
-
-	// verify attribute value is present in tag values
-	tagValuesResp, err := client.SearchTagValues(attr.Key)
-	require.NoError(t, err)
-	require.Contains(t, tagValuesResp.TagValues, attr.GetValue().GetStringValue())
-
-	// verify trace can be found using attribute
-	resp, err := client.Search(attr.GetKey() + "=" + attr.GetValue().GetStringValue())
-	require.NoError(t, err)
-
-	require.True(t, traceIDInResults(t, info.HexID(), resp))
 }
 
 func SearchTraceQLAndAssertTrace(t *testing.T, client *httpclient.Client, info *tempoUtil.TraceInfo) { // jpe - so many of these stupid things. consolidate! delete!
@@ -559,30 +202,6 @@ func SearchStreamAndAssertTrace(t *testing.T, ctx context.Context, client tempop
 	require.True(t, found)
 }
 
-// by passing a time range and using a query_ingesters_until/backend_after of 0 we can force the queriers
-// to look in the backend blocks
-func SearchAndAssertTraceBackend(t *testing.T, client *httpclient.Client, info *tempoUtil.TraceInfo, start, end int64) {
-	expected, err := info.ConstructTraceFromEpoch()
-	require.NoError(t, err)
-
-	attr := tempoUtil.RandomAttrFromTrace(expected)
-
-	// verify trace can be found using attribute and time range
-	resp, err := client.SearchWithRange(context.Background(), attr.GetKey()+"="+attr.GetValue().GetStringValue(), start, end)
-	require.NoError(t, err)
-
-	require.True(t, traceIDInResults(t, info.HexID(), resp))
-}
-
-// by passing a time range and using a query_ingesters_until/backend_after of 0 we can force the queriers
-// to look in the backend blocks
-func SearchAndAsserTagsBackend(t *testing.T, client *httpclient.Client, start, end int64) {
-	// There are additional tags in the backend
-	resp, err := client.SearchTagsWithRange(start, end)
-	require.NoError(t, err)
-	require.True(t, len(resp.TagNames) > 0)
-}
-
 func traceIDInResults(t *testing.T, hexID string, resp *tempopb.SearchResponse) bool {
 	for _, s := range resp.Traces {
 		equal, err := tempoUtil.EqualHexStringTraceIDs(s.TraceID, hexID)
@@ -644,71 +263,6 @@ func MakeThriftBatchWithSpanCountAttributeAndName(n int, name, resourceValue, sp
 	}
 }
 
-func CallFlush(t *testing.T, ingester *e2e.HTTPService) { // jpe - remove and any below that make sense
-	fmt.Printf("Calling /flush on %s\n", ingester.Name())
-	res, err := e2e.DoGet("http://" + ingester.Endpoint(3200) + "/flush")
-	require.NoError(t, err)
-	require.Equal(t, http.StatusNoContent, res.StatusCode)
-}
-
-func CallIngesterRing(t *testing.T, svc *e2e.HTTPService) {
-	endpoint := "/ingester/ring"
-	fmt.Printf("Calling %s on %s\n", endpoint, svc.Name())
-	res, err := e2e.DoGet("http://" + svc.Endpoint(3200) + endpoint)
-	require.NoError(t, err)
-	require.Equal(t, http.StatusOK, res.StatusCode)
-}
-
-func CallCompactorRing(t *testing.T, svc *e2e.HTTPService) {
-	endpoint := "/compactor/ring"
-	fmt.Printf("Calling %s on %s\n", endpoint, svc.Name())
-	res, err := e2e.DoGet("http://" + svc.Endpoint(3200) + endpoint)
-	require.NoError(t, err)
-	require.Equal(t, http.StatusOK, res.StatusCode)
-}
-
-func CallStatus(t *testing.T, svc *e2e.HTTPService) {
-	endpoint := "/status/endpoints"
-	fmt.Printf("Calling %s on %s\n", endpoint, svc.Name())
-	res, err := e2e.DoGet("http://" + svc.Endpoint(3200) + endpoint)
-	require.NoError(t, err)
-	require.Equal(t, http.StatusOK, res.StatusCode)
-}
-
-func CallBuildinfo(t *testing.T, svc *e2e.HTTPService) {
-	endpoint := "/api/status/buildinfo"
-	fmt.Printf("Calling %s on %s\n", endpoint, svc.Name())
-	res, err := e2e.DoGet("http://" + svc.Endpoint(3200) + endpoint)
-	require.NoError(t, err)
-	require.Equal(t, http.StatusOK, res.StatusCode)
-
-	// Check that the actual JSON response contains all the expected keys (we disregard the values)
-	var jsonResponse map[string]any
-	keys := []string{"version", "revision", "branch", "buildDate", "buildUser", "goVersion"}
-	body, err := io.ReadAll(res.Body)
-	require.NoError(t, err)
-	err = json.Unmarshal(body, &jsonResponse)
-	require.NoError(t, err)
-	for _, key := range keys {
-		_, ok := jsonResponse[key]
-		require.True(t, ok)
-	}
-
-	version, ok := jsonResponse["version"].(string)
-	require.True(t, ok)
-	semverRegex := `^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$`
-	require.Regexp(t, semverRegex, version)
-
-	defer res.Body.Close()
-}
-
-func AssertEcho(t *testing.T, url string) {
-	res, err := e2e.DoGet(url)
-	require.NoError(t, err)
-	require.Equal(t, http.StatusOK, res.StatusCode)
-	defer func() { require.NoError(t, res.Body.Close()) }()
-}
-
 func QueryAndAssertTrace(t *testing.T, client *httpclient.Client, info *tempoUtil.TraceInfo) {
 	resp, err := client.QueryTrace(info.HexID())
 	require.NoError(t, err)
@@ -738,16 +292,6 @@ func SpanCount(a *tempopb.Trace) float64 {
 	return float64(count)
 }
 
-func NewPrometheus() *e2e.HTTPService { // jpe what can be made private?
-	return e2e.NewHTTPService(
-		"prometheus",
-		prometheusImage,
-		e2e.NewCommandWithoutEntrypoint("/bin/prometheus", "--config.file=/etc/prometheus/prometheus.yml", "--web.enable-remote-write-receiver"),
-		e2e.NewHTTPReadinessProbe(9090, "/-/ready", 200, 299),
-		9090,
-	)
-}
-
 type JaegerToOTLPExporter struct {
 	exporter exporter.Traces
 }
@@ -764,7 +308,7 @@ func NewJaegerToOTLPExporter(endpoint string) (*JaegerToOTLPExporter, error) {
 	return NewJaegerToOTLPExporterWithAuth(endpoint, "", "", false)
 }
 
-// EmitBatch converts a Jaeger Thrift batch to OpenTelemetry traces format
+// EmitBatch converts a Jaeger Thrift batch to OpenTelemetry traces formats
 // and forwards them to the configured OTLP endpoint.
 func (c *JaegerToOTLPExporter) EmitBatch(ctx context.Context, b *thrift.Batch) error {
 	traces, err := jaeger.ThriftToTraces(b)

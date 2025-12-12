@@ -145,7 +145,7 @@ func (m *MockHTTPClient) SearchTagValuesV2(key string, query string) (*tempopb.S
 }
 
 //nolint:all
-func (m *MockHTTPClient) SearchTagValuesV2WithRange(tag string, start int64, end int64) (*tempopb.SearchTagValuesV2Response, error) {
+func (m *MockHTTPClient) SearchTagValuesV2WithRange(tag, query string, start int64, end int64) (*tempopb.SearchTagValuesV2Response, error) {
 	panic("unimplemented")
 }
 
@@ -160,7 +160,7 @@ func (m *MockHTTPClient) SearchTagsV2() (*tempopb.SearchTagsV2Response, error) {
 }
 
 //nolint:all
-func (m *MockHTTPClient) SearchTagsV2WithRange(start int64, end int64) (*tempopb.SearchTagsV2Response, error) {
+func (m *MockHTTPClient) SearchTagsV2WithRange(scope, query string, start int64, end int64) (*tempopb.SearchTagsV2Response, error) {
 	panic("unimplemented")
 }
 

@@ -1,7 +1,6 @@
 package deployments
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -30,14 +29,13 @@ func TestSearchUsingJaegerPlugin(t *testing.T) {
 		require.NoError(t, err)
 
 		batch := makeThriftBatchWithSpanCountForServiceAndOp(2, "execute", "backend")
-		require.NoError(t, h.JaegerExporter.EmitBatch(context.Background(), batch))
+		h.WriteJaegerBatch(t, batch)
 
 		batch = makeThriftBatchWithSpanCountForServiceAndOp(2, "request", "frontend")
-		require.NoError(t, h.JaegerExporter.EmitBatch(context.Background(), batch))
+		h.WriteJaegerBatch(t, batch)
 
 		// wait for the 2 traces to be written to the live stores
-		liveStoreA := h.Services[util.ServiceLiveStoreZoneA]
-		require.NoError(t, liveStoreA.WaitSumMetricsWithOptions(e2e.Equals(2), []string{"tempo_live_store_traces_created_total"}, e2e.WaitMissingMetrics))
+		h.WaitTracesQueryable(t, 2)
 
 		callJaegerQuerySearchServicesAssert(t, jaegerQuery, servicesOrOpJaegerQueryResponse{
 			Data: []string{

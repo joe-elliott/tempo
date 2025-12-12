@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/grafana/e2e"
 	"github.com/grafana/tempo/integration/util"
 	"github.com/stretchr/testify/require"
 
@@ -20,16 +19,16 @@ func TestCompression(t *testing.T) {
 	util.WithTempoHarness(t, util.TestHarnessConfig{}, func(h *util.TempoHarness) {
 		// Send a trace
 		info := tempoUtil.NewTraceInfo(time.Now(), "")
-		require.NoError(t, info.EmitAllBatches(h.JaegerExporter))
+		h.WriteTraceInfo(t, info)
 
-		liveStoreA := h.Services[util.ServiceLiveStoreZoneA]
-		require.NoError(t, liveStoreA.WaitSumMetricsWithOptions(e2e.Equals(1), []string{"tempo_live_store_traces_created_total"}, e2e.WaitMissingMetrics))
+		h.WaitTracesQueryable(t, 1)
 
 		// Create client with compression
-		util.QueryAndAssertTrace(t, h.HTTPClient, info)
+		apiClient := h.APIClientHTTP("")
+		util.QueryAndAssertTrace(t, apiClient, info)
 
 		// Query and assert trace with compression
-		apiClientWithCompression := httpclient.NewWithCompression("http://"+h.QueryFrontendHTTPEndpoint, "")
+		apiClientWithCompression := httpclient.NewWithCompression(apiClient.BaseURL, "") // jpe - get rid of baseURL pattern?
 		queryAndAssertTraceCompression(t, apiClientWithCompression, info)
 	})
 }

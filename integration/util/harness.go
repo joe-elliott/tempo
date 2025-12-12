@@ -1,7 +1,6 @@
 package util
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -9,19 +8,16 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"text/template"
 	"time"
 
 	"github.com/grafana/e2e"
 	e2edb "github.com/grafana/e2e/db"
 	"github.com/grafana/tempo/cmd/tempo/app"
 	"github.com/grafana/tempo/modules/overrides"
-	"github.com/grafana/tempo/pkg/httpclient"
 	"github.com/grafana/tempo/tempodb/backend"
 	"github.com/grafana/tempo/tempodb/backend/azure"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/stretchr/testify/require"
-	"go.opentelemetry.io/collector/exporter"
 	"gopkg.in/yaml.v2"
 )
 
@@ -35,6 +31,11 @@ const (
 	ServiceBlockBuilder     = "block-builder-0"
 	ServiceBackendScheduler = "backend-scheduler"
 	ServiceBackendWorker    = "backend-worker"
+)
+
+const (
+	azuriteImage = "mcr.microsoft.com/azure-storage/azurite:3.35.0"
+	gcsImage     = "fsouza/fake-gcs-server:1.52.2"
 )
 
 // DeploymentMode specifies whether to run Tempo as a single binary or microservices
@@ -77,17 +78,10 @@ type TempoHarness struct {
 	// Tempo services - use constants above to access services by name
 	Services map[string]*e2e.HTTPService
 
-	// Clients
-	HTTPClient     *httpclient.Client    // HTTP client for Tempo API jpe - gRPC client as well?
-	JaegerExporter *JaegerToOTLPExporter // Client for sending traces via OTLP // jpe - do we need both jaeger and otlp exporter? do we just need a function to send traces?
-	OTLPExporter   exporter.Traces       // Direct OTLP exporter
-
 	TestScenario *e2e.Scenario
 
 	// Endpoints
-	DistributorOTLPEndpoint   string // OTLP gRPC endpoint (port 4317) // jpe - do we need these if we have the HTTP clients above?
-	QueryFrontendHTTPEndpoint string // HTTP endpoint (port 3200)
-	QueryFrontendGRPCEndpoint string // gRPC endpoint (port 3200)
+	DistributorOTLPEndpoint string // OTLP gRPC endpoint (port 4317) // jpe - do we need these if we have the HTTP clients above?
 
 	// Overrides file path for dynamic updates
 	overridesPath string
@@ -225,314 +219,8 @@ func runTempoHarness(t *testing.T, harnessCfg TestHarnessConfig, requestedBacken
 		require.NoError(t, startMicroservices(t, s, harness, harnessCfg), "failed to start microservices")
 	}
 
-	if harnessCfg.Components&ComponentRecentDataQuerying != 0 { // jpe - test flag func, consolidate with logic in startMicroservices to set endpoints and clients?
-		// Create HTTP client
-		harness.HTTPClient = httpclient.New("http://"+harness.QueryFrontendHTTPEndpoint, "")
-
-		// Create Jaeger to OTLP exporter - jpe - do we need both of these?
-		harness.JaegerExporter, err = NewJaegerToOTLPExporter(harness.DistributorOTLPEndpoint)
-		require.NoError(t, err, "failed to create Jaeger to OTLP exporter")
-		require.NotNil(t, harness.JaegerExporter)
-
-		// Create OTLP exporter (jpe - do we need both of these?)
-		harness.OTLPExporter, err = NewOtelGRPCExporter(harness.DistributorOTLPEndpoint)
-		require.NoError(t, err, "failed to create OTLP exporter")
-		require.NotNil(t, harness.OTLPExporter)
-	}
-
 	// Run the test function
 	testFunc(harness)
-}
-
-// normalizeTestName creates a valid Docker service name from a test name
-func normalizeTestName(testName string) string {
-	// max docker name length is 63. otherwise dns fails silently
-	// max test name length is 40 to leave room prefix and suffix. the full container name will be e2e_<test name>_<service name>
-	// this means that if two tests have the same first 40 characters in their names they will conflict!!
-	maxNameLen := 40
-	name := testName[len("Test"):] // strip "Test" prefix
-	if len(name) > maxNameLen {
-		name = name[:maxNameLen]
-	}
-	// docker only allows a-zA-Z0-9_.- in a service name. replace everything else with _
-	re := regexp.MustCompile(`[^a-zA-Z0-9_.-]`)
-	return re.ReplaceAllString(name, "_")
-}
-
-// setupConfig loads and merges config files, creates the overrides file, and validates the config
-func setupConfig(t *testing.T, s *e2e.Scenario, config *TestHarnessConfig, requestedBackend string, harness *TempoHarness) app.Config {
-	t.Helper()
-
-	// Initialize template data if needed
-	if config.ConfigTemplateData == nil {
-		config.ConfigTemplateData = make(map[string]any)
-	}
-
-	// Call ConfigTemplateFunc if provided to populate template data
-	if config.ConfigTemplateFunc != nil {
-		err := config.ConfigTemplateFunc(s, config.ConfigTemplateData)
-		require.NoError(t, err, "failed to execute config template function")
-	}
-
-	// Copy base config to shared directory
-	baseConfigPath := "../util/config-base.yaml" // jpe - read from the context of the other folder. need to make these consts somewhere with a note
-	err := CopyFileToSharedDir(s, baseConfigPath, "config.yaml")
-	require.NoError(t, err, "failed to copy base config to shared dir")
-
-	// Apply single binary specific config if in single binary mode
-	if config.DeploymentMode == DeploymentModeSingleBinary {
-		err := applyConfigOverlay(s, "../util/config-single-binary.yaml", nil)
-		require.NoError(t, err, "failed to apply single binary config overlay")
-	}
-
-	// backend overlay
-	if requestedBackend != backend.Local {
-		backendOverlay := fmt.Sprintf("../util/config-backend-%s.yaml", requestedBackend)
-		err := applyConfigOverlay(s, backendOverlay, nil)
-		require.NoError(t, err, "failed to apply backend config overlay", requestedBackend)
-	}
-
-	// Apply config overlay if provided
-	if config.ConfigOverlay != "" {
-		err := applyConfigOverlay(s, config.ConfigOverlay, config.ConfigTemplateData)
-		require.NoError(t, err, "failed to apply config overlay")
-	}
-
-	// Create empty overrides file
-	overridesPath := s.SharedDir() + "/overrides.yaml"
-	err = os.WriteFile(overridesPath, []byte("overrides: {}\n"), 0644)
-	require.NoError(t, err, "failed to write initial overrides file")
-	harness.overridesPath = overridesPath
-
-	// Read and parse the final config
-	configPath := s.SharedDir() + "/config.yaml" // jpe - make a shared func somewhere
-	configBytes, err := os.ReadFile(configPath)
-	require.NoError(t, err, "failed to read merged config file")
-
-	var cfg app.Config
-	err = yaml.UnmarshalStrict(configBytes, &cfg)
-	require.NoError(t, err, "failed to unmarshal merged config into app.Config")
-
-	return cfg
-}
-
-// startBackend starts the appropriate object storage backend based on the config
-func startBackend(t *testing.T, s *e2e.Scenario, cfg app.Config) (e2e.Service, error) {
-	t.Helper()
-
-	var backendService e2e.Service
-	switch cfg.StorageConfig.Trace.Backend {
-	case backend.S3:
-		port, err := parsePort(cfg.StorageConfig.Trace.S3.Endpoint)
-		if err != nil {
-			return nil, err
-		}
-		backendService = e2edb.NewMinio(port, "tempo")
-		if backendService == nil {
-			return nil, fmt.Errorf("error creating minio backend")
-		}
-		err = s.StartAndWaitReady(backendService)
-		if err != nil {
-			return nil, err
-		}
-	case backend.Azure:
-		port, err := parsePort(cfg.StorageConfig.Trace.Azure.Endpoint)
-		if err != nil {
-			return nil, err
-		}
-		backendService = newAzurite(port)
-		err = s.StartAndWaitReady(backendService)
-		if err != nil {
-			return nil, err
-		}
-		// Get the actual endpoint after the service is started
-		httpService, ok := backendService.(*e2e.HTTPService)
-		if ok {
-			cfg.StorageConfig.Trace.Azure.Endpoint = httpService.Endpoint(port)
-		}
-		_, err = azure.CreateContainer(context.TODO(), cfg.StorageConfig.Trace.Azure)
-		if err != nil {
-			return nil, err
-		}
-	case backend.GCS:
-		port, err := parsePort(cfg.StorageConfig.Trace.GCS.Endpoint)
-		if err != nil {
-			return nil, err
-		}
-		backendService = newGCS(port)
-		if backendService == nil {
-			return nil, fmt.Errorf("error creating gcs backend")
-		}
-		err = s.StartAndWaitReady(backendService)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return backendService, nil
-}
-
-// parsePort extracts the port number from an endpoint string
-func parsePort(endpoint string) (int, error) {
-	substrings := strings.Split(endpoint, ":")
-	portStrings := strings.Split(substrings[len(substrings)-1], "/")
-	port, err := strconv.Atoi(portStrings[0])
-	if err != nil {
-		return 0, err
-	}
-	return port, nil
-}
-
-// applyConfigOverlay applies a config overlay file onto the shared config.yaml file,
-// with optional template rendering. The overlay is merged onto the existing shared config
-// and written back to shared config.yaml.
-func applyConfigOverlay(s *e2e.Scenario, overlayPath string, templateData map[string]any) error {
-	configPath := s.SharedDir() + "/config.yaml" // make a shared func somewhere
-
-	// Read and parse current shared config
-	baseBuff, err := os.ReadFile(configPath)
-	if err != nil {
-		return fmt.Errorf("failed to read shared config file: %w", err)
-	}
-
-	var baseMap map[any]any
-	err = yaml.Unmarshal(baseBuff, &baseMap)
-	if err != nil {
-		return fmt.Errorf("failed to parse shared config file: %w", err)
-	}
-
-	// If there's an overlay, apply it
-	if overlayPath != "" {
-		// Read overlay file
-		overlayBuff, err := os.ReadFile(overlayPath)
-		if err != nil {
-			return fmt.Errorf("failed to read config overlay file: %w", err)
-		}
-
-		// Apply template rendering if template data is provided
-		if len(templateData) > 0 {
-			tmpl, err := template.New("config").Parse(string(overlayBuff))
-			if err != nil {
-				return fmt.Errorf("failed to parse config overlay template: %w", err)
-			}
-
-			var renderedBuff bytes.Buffer
-			err = tmpl.Execute(&renderedBuff, templateData)
-			if err != nil {
-				return fmt.Errorf("failed to execute config overlay template: %w", err)
-			}
-
-			overlayBuff = renderedBuff.Bytes()
-		}
-
-		// Parse overlay
-		var overlayMap map[any]any
-		err = yaml.Unmarshal(overlayBuff, &overlayMap)
-		if err != nil {
-			return fmt.Errorf("failed to parse config overlay file: %w", err)
-		}
-
-		// Merge overlay onto base
-		baseMap = mergeMaps(baseMap, overlayMap)
-	}
-
-	// Marshal and write the result back to shared config
-	outputBytes, err := yaml.Marshal(baseMap)
-	if err != nil {
-		return fmt.Errorf("failed to marshal merged config: %w", err)
-	}
-
-	err = os.WriteFile(configPath, outputBytes, 0644)
-	if err != nil {
-		return fmt.Errorf("failed to write config file: %w", err)
-	}
-
-	return nil
-}
-
-// mergeMaps recursively merges overlay map onto base map
-// Values in overlay take precedence over base values
-func mergeMaps(base, overlay map[any]any) map[any]any {
-	result := make(map[any]any)
-
-	// Copy all base values
-	for k, v := range base {
-		result[k] = v
-	}
-
-	// Overlay values, recursively merging nested maps
-	for k, v := range overlay {
-		if v == nil {
-			result[k] = v
-			continue
-		}
-
-		// If both base and overlay have a map at this key, merge recursively
-		if baseVal, exists := result[k]; exists {
-			baseMap, baseIsMap := toMapAnyAny(baseVal)
-			overlayMap, overlayIsMap := toMapAnyAny(v)
-
-			if baseIsMap && overlayIsMap {
-				result[k] = mergeMaps(baseMap, overlayMap)
-				continue
-			}
-		}
-
-		// Otherwise, overlay value replaces base value
-		result[k] = v
-	}
-
-	return result
-}
-
-// toMapAnyAny converts various map types to map[any]any
-func toMapAnyAny(v any) (map[any]any, bool) {
-	switch m := v.(type) {
-	case map[any]any:
-		return m, true
-	case map[string]any:
-		result := make(map[any]any)
-		for k, v := range m {
-			result[k] = v
-		}
-		return result, true
-	default:
-		return nil, false
-	}
-}
-
-// newAzurite creates a new Azurite service for Azure blob storage emulation
-func newAzurite(port int) *e2e.HTTPService {
-	s := e2e.NewHTTPService(
-		"azurite",
-		azuriteImage,
-		e2e.NewCommandWithoutEntrypoint("sh", "-c", "azurite -l /data --blobHost 0.0.0.0"),
-		e2e.NewHTTPReadinessProbe(port, "/devstoreaccount1?comp=list", 403, 403), // If we get 403 the Azurite is ready
-		port, // blob storage port
-	)
-
-	s.SetBackoff(TempoBackoff())
-
-	return s
-}
-
-// newGCS creates a new fake GCS service for Google Cloud Storage emulation
-func newGCS(port int) *e2e.HTTPService {
-	commands := []string{
-		"mkdir -p /data/tempo",
-		"/bin/fake-gcs-server -data /data -public-host=tempo_e2e-gcs -port=4443",
-	}
-	s := e2e.NewHTTPService(
-		"gcs",
-		gcsImage,
-		e2e.NewCommandWithoutEntrypoint("sh", "-c", strings.Join(commands, " && ")),
-		e2e.NewHTTPReadinessProbe(port, "/", 400, 400), // for lack of a better way, readiness probe does not support https at the moment
-		port,
-	)
-
-	s.SetBackoff(TempoBackoff())
-
-	return s
 }
 
 // UpdateOverrides updates the tenant overrides file with the provided configuration.
@@ -593,14 +281,9 @@ func (h *TempoHarness) GetConfig() (app.Config, error) {
 	return cfg, nil
 }
 
-// RestartServiceWithConfigOverlay stops a service, applies a config overlay, and restarts the service.
+// restartServiceWithConfigOverlay stops a service, applies a config overlay, and restarts the service.
 // The overlay file is merged onto the existing config, with overlay values taking precedence.
-//
-// Example usage:
-//
-//	queryFrontend := h.Services[util.ServiceQueryFrontend]
-//	err := h.RestartServiceWithConfigOverlay(queryFrontend, "./config-query-backend.yaml")
-func (h *TempoHarness) RestartServiceWithConfigOverlay(t *testing.T, service *e2e.HTTPService, overlayPath string) error { // jpe -restart of single binary takes forever
+func (h *TempoHarness) restartServiceWithConfigOverlay(t *testing.T, service *e2e.HTTPService, overlayPath string) error { // jpe -restart of single binary takes forever
 	// Stop the service
 	err := service.Stop()
 	if strings.Contains(err.Error(), "exit status 137") { // 137 is returned by linux when it is force killed b/c it doesn't stop in time.
@@ -625,24 +308,95 @@ func (h *TempoHarness) RestartServiceWithConfigOverlay(t *testing.T, service *e2
 	}
 
 	// reset endpoints and rebuild clients jpe - make helper func? - some of this doesn't make sense depending on the ComponentsMask.
-	h.QueryFrontendHTTPEndpoint = h.Services[ServiceQueryFrontend].Endpoint(3200)
-	h.QueryFrontendGRPCEndpoint = h.Services[ServiceQueryFrontend].Endpoint(3200)
-	h.DistributorOTLPEndpoint = h.Services[ServiceDistributor].Endpoint(4317)
-
-	// Create HTTP client
-	h.HTTPClient = httpclient.New("http://"+h.QueryFrontendHTTPEndpoint, "")
-
-	// Create Jaeger to OTLP exporter - jpe - do we need both of these?
-	h.JaegerExporter, err = NewJaegerToOTLPExporter(h.DistributorOTLPEndpoint)
-	require.NoError(t, err, "failed to create Jaeger to OTLP exporter")
-	require.NotNil(t, h.JaegerExporter)
-
-	// Create OTLP exporter (jpe - do we need both of these?)
-	h.OTLPExporter, err = NewOtelGRPCExporter(h.DistributorOTLPEndpoint)
-	require.NoError(t, err, "failed to create OTLP exporter")
-	require.NotNil(t, h.OTLPExporter)
+	h.DistributorOTLPEndpoint = h.Services[ServiceDistributor].Endpoint(4317) // mimic api client funcs
 
 	return nil
+}
+
+func (h *TempoHarness) WaitTracesQueryable(t *testing.T, traces int) {
+	t.Helper()
+
+	liveStoreZoneA := h.Services[ServiceLiveStoreZoneA]
+	require.NoError(t, liveStoreZoneA.WaitSumMetricsWithOptions(e2e.Equals(float64(traces)), []string{"tempo_live_store_traces_created_total"}, e2e.WaitMissingMetrics))
+
+	liveStoreZoneB := h.Services[ServiceLiveStoreZoneB]
+	require.NoError(t, liveStoreZoneB.WaitSumMetricsWithOptions(e2e.Equals(float64(traces)), []string{"tempo_live_store_traces_created_total"}, e2e.WaitMissingMetrics))
+}
+
+func (h *TempoHarness) WaitTracesWrittenToBackend(t *testing.T, traces int) {
+	t.Helper()
+
+	queryFrontend := h.Services[ServiceQueryFrontend]
+	require.NoError(t, queryFrontend.WaitSumMetricsWithOptions(e2e.Equals(float64(traces)), []string{"tempodb_backend_objects_total"}, e2e.WaitMissingMetrics))
+}
+
+func (h *TempoHarness) ForceBackendQuerying(t *testing.T) { // jpe - investigate just killing livestores and waiting
+	frontend := h.Services[ServiceQueryFrontend]
+	require.NoError(t, h.restartServiceWithConfigOverlay(t, frontend, "../util/config-query-backend.yaml"))
+}
+
+/*
+  local object storage
+*/
+// startBackend starts the appropriate object storage backend based on the config
+func startBackend(t *testing.T, s *e2e.Scenario, cfg app.Config) (e2e.Service, error) {
+	t.Helper()
+
+	var backendService e2e.Service
+	switch cfg.StorageConfig.Trace.Backend {
+	case backend.S3:
+		port, err := parsePort(cfg.StorageConfig.Trace.S3.Endpoint)
+		if err != nil {
+			return nil, err
+		}
+		backendService = e2edb.NewMinio(port, "tempo")
+		err = s.StartAndWaitReady(backendService)
+		if err != nil {
+			return nil, err
+		}
+	case backend.Azure:
+		port, err := parsePort(cfg.StorageConfig.Trace.Azure.Endpoint)
+		if err != nil {
+			return nil, err
+		}
+		backendService = newAzurite(port)
+		err = s.StartAndWaitReady(backendService)
+		if err != nil {
+			return nil, err
+		}
+		// Get the actual endpoint after the service is started
+		httpService, ok := backendService.(*e2e.HTTPService)
+		if ok {
+			cfg.StorageConfig.Trace.Azure.Endpoint = httpService.Endpoint(port)
+		}
+		_, err = azure.CreateContainer(context.TODO(), cfg.StorageConfig.Trace.Azure)
+		if err != nil {
+			return nil, err
+		}
+	case backend.GCS:
+		port, err := parsePort(cfg.StorageConfig.Trace.GCS.Endpoint)
+		if err != nil {
+			return nil, err
+		}
+		backendService = newGCS(port)
+		err = s.StartAndWaitReady(backendService)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return backendService, nil
+}
+
+// parsePort extracts the port number from an endpoint string
+func parsePort(endpoint string) (int, error) {
+	substrings := strings.Split(endpoint, ":")
+	portStrings := strings.Split(substrings[len(substrings)-1], "/")
+	port, err := strconv.Atoi(portStrings[0])
+	if err != nil {
+		return 0, err
+	}
+	return port, nil
 }
 
 // startMicroservices starts all Tempo microservices and waits for them to be ready - jpe - start multiple concurrently
@@ -652,19 +406,13 @@ func startMicroservices(t *testing.T, s *e2e.Scenario, harness *TempoHarness, co
 	if config.Components&ComponentRecentDataQuerying != 0 {
 		// Always start core components for recent data ingestion and querying
 		// Start LiveStores
-		liveStoreZoneA := NewNamedTempoLiveStore(
-			"live-store-zone-a",
-			0,
-		)
+		liveStoreZoneA := newTempoService("live-store-zone-a-0", "live-store")
 		harness.Services[ServiceLiveStoreZoneA] = liveStoreZoneA
 		if err := s.StartAndWaitReady(liveStoreZoneA); err != nil {
 			return fmt.Errorf("failed to start live store zone a: %w", err)
 		}
 
-		liveStoreZoneB := NewNamedTempoLiveStore(
-			"live-store-zone-b",
-			0,
-		)
+		liveStoreZoneB := newTempoService("live-store-zone-b-0", "live-store")
 		harness.Services[ServiceLiveStoreZoneB] = liveStoreZoneB
 		if err := s.StartAndWaitReady(liveStoreZoneB); err != nil {
 			return fmt.Errorf("failed to start live store zone b: %w", err)
@@ -684,21 +432,24 @@ func startMicroservices(t *testing.T, s *e2e.Scenario, harness *TempoHarness, co
 		}
 
 		// Start Distributor
-		harness.Services[ServiceDistributor] = NewTempoDistributor()
+		harness.Services[ServiceDistributor] = newTempoService("distributor", "distributor",
+			14250, // jaeger grpc ingest
+			4317,  // otlp grpc
+			4318,  // otlp http
+			9411,  // zipkin ingest
+		)
 		if err := s.StartAndWaitReady(harness.Services[ServiceDistributor]); err != nil {
 			return fmt.Errorf("failed to start distributor: %w", err)
 		}
 
 		// Start Query Frontend and Querier
-		harness.Services[ServiceQueryFrontend] = NewTempoQueryFrontend()
-		harness.Services[ServiceQuerier] = NewTempoQuerier()
+		harness.Services[ServiceQueryFrontend] = newTempoService("query-frontend", "query-frontend")
+		harness.Services[ServiceQuerier] = newTempoService("querier", "querier")
 		if err := s.StartAndWaitReady(harness.Services[ServiceQueryFrontend], harness.Services[ServiceQuerier]); err != nil {
 			return fmt.Errorf("failed to start query frontend and querier: %w", err)
 		}
 
 		// Set endpoints
-		harness.QueryFrontendHTTPEndpoint = harness.Services[ServiceQueryFrontend].Endpoint(3200)
-		harness.QueryFrontendGRPCEndpoint = harness.Services[ServiceQueryFrontend].Endpoint(3200)
 		harness.DistributorOTLPEndpoint = harness.Services[ServiceDistributor].Endpoint(4317)
 	}
 
@@ -706,7 +457,7 @@ func startMicroservices(t *testing.T, s *e2e.Scenario, harness *TempoHarness, co
 
 	// Start Block Builder for backend work
 	if config.Components&ComponentsBackendQuerying != 0 {
-		blockBuilder := NewTempoBlockBuilder(0)
+		blockBuilder := newTempoService("block-builder-0", "block-builder")
 		harness.Services[ServiceBlockBuilder] = blockBuilder
 		if err := s.StartAndWaitReady(blockBuilder); err != nil {
 			return fmt.Errorf("failed to start block builder: %w", err)
@@ -715,8 +466,8 @@ func startMicroservices(t *testing.T, s *e2e.Scenario, harness *TempoHarness, co
 
 	// Start Metrics Generator and Prometheus
 	if config.Components&ComponentsMetricsGenerator != 0 {
-		harness.Services[ServiceMetricsGenerator] = NewTempoMetricsGenerator()
-		harness.Prometheus = NewPrometheus()
+		harness.Services[ServiceMetricsGenerator] = newTempoService("metrics-generator", "metrics-generator")
+		harness.Prometheus = newPrometheus()
 		if err := s.StartAndWaitReady(harness.Services[ServiceMetricsGenerator], harness.Prometheus); err != nil {
 			return fmt.Errorf("failed to start metrics generator and prometheus: %w", err)
 		}
@@ -724,8 +475,8 @@ func startMicroservices(t *testing.T, s *e2e.Scenario, harness *TempoHarness, co
 
 	// Start Backend Scheduler and Worker for compaction
 	if config.Components&ComponentsBackendWork != 0 {
-		scheduler := NewTempoTarget("backend-scheduler", "config.yaml")
-		worker := NewTempoTarget("backend-worker", "config.yaml")
+		scheduler := newTempoService("backend-scheduler", "backend-scheduler")
+		worker := newTempoService("backend-worker", "backend-worker")
 		harness.Services[ServiceBackendScheduler] = scheduler
 		harness.Services[ServiceBackendWorker] = worker
 		if err := s.StartAndWaitReady(scheduler, worker); err != nil {
@@ -774,9 +525,22 @@ func startSingleBinary(t *testing.T, s *e2e.Scenario, harness *TempoHarness, con
 	}
 
 	// Set endpoints (all pointing to the same service)
-	harness.QueryFrontendHTTPEndpoint = tempo.Endpoint(3200)
-	harness.QueryFrontendGRPCEndpoint = tempo.Endpoint(3200)
 	harness.DistributorOTLPEndpoint = tempo.Endpoint(4317)
 
 	return nil
+}
+
+// normalizeTestName creates a valid Docker service name from a test name
+func normalizeTestName(testName string) string {
+	// max docker name length is 63. otherwise dns fails silently
+	// max test name length is 40 to leave room prefix and suffix. the full container name will be e2e_<test name>_<service name>
+	// this means that if two tests have the same first 40 characters in their names they will conflict!!
+	maxNameLen := 40
+	name := testName[len("Test"):] // strip "Test" prefix
+	if len(name) > maxNameLen {
+		name = name[:maxNameLen]
+	}
+	// docker only allows a-zA-Z0-9_.- in a service name. replace everything else with _
+	re := regexp.MustCompile(`[^a-zA-Z0-9_.-]`)
+	return re.ReplaceAllString(name, "_")
 }

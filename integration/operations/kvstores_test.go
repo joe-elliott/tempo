@@ -102,7 +102,7 @@ func TestKVStores(t *testing.T) {
 
 				// Send a trace
 				info := tempoUtil.NewTraceInfo(time.Now(), "")
-				require.NoError(t, info.EmitAllBatches(h.JaegerExporter))
+				h.WriteTraceInfo(t, info)
 
 				expected, err := info.ConstructTraceFromEpoch()
 				require.NoError(t, err)
@@ -114,21 +114,12 @@ func TestKVStores(t *testing.T) {
 				))
 
 				// Wait for trace to be created in live stores
-				require.NoError(t, liveStoreA.WaitSumMetricsWithOptions(
-					e2e.Greater(0),
-					[]string{"tempo_live_store_traces_created_total"},
-					e2e.WaitMissingMetrics,
-				))
-
-				require.NoError(t, liveStoreB.WaitSumMetricsWithOptions(
-					e2e.Greater(0),
-					[]string{"tempo_live_store_traces_created_total"},
-					e2e.WaitMissingMetrics,
-				))
+				h.WaitTracesQueryable(t, 1)
 
 				// Find trace
-				util.QueryAndAssertTrace(t, h.HTTPClient, info)
-				util.SearchTraceQLAndAssertTrace(t, h.HTTPClient, info)
+				apiClient := h.APIClientHTTP("")
+				util.QueryAndAssertTrace(t, apiClient, info)
+				util.SearchTraceQLAndAssertTrace(t, apiClient, info)
 			})
 		})
 	}

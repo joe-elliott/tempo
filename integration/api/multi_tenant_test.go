@@ -1,15 +1,12 @@
 package api
 
 import (
-	"context"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/grafana/dskit/user"
 	"github.com/grafana/e2e"
 	"github.com/grafana/tempo/integration/util"
-	"github.com/grafana/tempo/pkg/httpclient"
 	tempoUtil "github.com/grafana/tempo/pkg/util"
 	"github.com/stretchr/testify/require"
 )
@@ -43,7 +40,7 @@ func testSearch(t *testing.T, tenant string) {
 		// write traces for all tenants
 		for _, tenant := range tenants {
 			info = tempoUtil.NewTraceInfo(time.Now(), tenant)
-			require.NoError(t, info.EmitAllBatches(h.JaegerExporter))
+			h.WriteTraceInfo(t, info)
 
 			trace, err := info.ConstructTraceFromEpoch()
 			require.NoError(t, err)
@@ -52,17 +49,13 @@ func testSearch(t *testing.T, tenant string) {
 		}
 
 		// assert that we have one trace for each tenant and correct number of spans received
-		liveStoreZoneA := h.Services[util.ServiceLiveStoreZoneA]
-		require.NoError(t, liveStoreZoneA.WaitSumMetrics(e2e.Equals(float64(tenantSize)), "tempo_live_store_traces_created_total"))
+		h.WaitTracesQueryable(t, tenantSize)
 
 		distributor := h.Services[util.ServiceDistributor]
 		require.NoError(t, distributor.WaitSumMetrics(e2e.Equals(expectedSpans), "tempo_distributor_spans_received_total"))
 
 		// check trace by id
-		apiClient := httpclient.New("http://"+h.QueryFrontendHTTPEndpoint, tenant)
-		util.SearchAndAssertTrace(t, apiClient, info)
-
-		// search and traceql search
+		apiClient := h.APIClientHTTP(tenant)
 		util.SearchTraceQLAndAssertTrace(t, apiClient, info)
 
 		// call search tags endpoints, ensure no errors and results are not empty
@@ -77,15 +70,10 @@ func testSearch(t *testing.T, tenant string) {
 		require.NoError(t, err)
 		require.NotEmpty(t, tagsValuesV2Resp.TagValues)
 
-		// test streaming search over grpc
-		grpcCtx := user.InjectOrgID(context.Background(), tenant)
-		grpcCtx, err = user.InjectIntoGRPCRequest(grpcCtx)
-		require.NoError(t, err)
-
-		grpcClient, err := util.NewSearchGRPCClient(grpcCtx, h.QueryFrontendGRPCEndpoint)
+		grpcClient, ctx, err := h.APIClientGRPC(tenant)
 		require.NoError(t, err)
 
 		now := time.Now()
-		util.SearchStreamAndAssertTrace(t, grpcCtx, grpcClient, info, now.Add(-time.Hour).Unix(), now.Add(time.Hour).Unix())
+		util.SearchStreamAndAssertTrace(t, ctx, grpcClient, info, now.Add(-time.Hour).Unix(), now.Add(time.Hour).Unix())
 	})
 }

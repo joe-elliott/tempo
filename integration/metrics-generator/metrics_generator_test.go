@@ -1,7 +1,6 @@
 package e2e
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"math/rand"
@@ -38,7 +37,7 @@ func TestMetricsGeneratorRemoteWrite(t *testing.T) {
 		traceIDHigh := r.Int63()
 		parentSpanID := r.Int63()
 
-		err := h.JaegerExporter.EmitBatch(context.Background(), &thrift.Batch{
+		h.WriteJaegerBatch(t, &thrift.Batch{
 			Process: &thrift.Process{ServiceName: "lb"},
 			Spans: []*thrift.Span{
 				{
@@ -53,9 +52,8 @@ func TestMetricsGeneratorRemoteWrite(t *testing.T) {
 				},
 			},
 		})
-		require.NoError(t, err)
 
-		err = h.JaegerExporter.EmitBatch(context.Background(), &thrift.Batch{
+		h.WriteJaegerBatch(t, &thrift.Batch{
 			Process: &thrift.Process{ServiceName: "app"},
 			Spans: []*thrift.Span{
 				{
@@ -70,10 +68,9 @@ func TestMetricsGeneratorRemoteWrite(t *testing.T) {
 				},
 			},
 		})
-		require.NoError(t, err)
 
 		// also send one with 5 minutes old timestamp
-		err = h.JaegerExporter.EmitBatch(context.Background(), &thrift.Batch{
+		h.WriteJaegerBatch(t, &thrift.Batch{
 			Process: &thrift.Process{ServiceName: "app"},
 			Spans: []*thrift.Span{
 				{
@@ -88,10 +85,9 @@ func TestMetricsGeneratorRemoteWrite(t *testing.T) {
 				},
 			},
 		})
-		require.NoError(t, err)
 
 		// also send one with timestamp 10 days in the future
-		err = h.JaegerExporter.EmitBatch(context.Background(), &thrift.Batch{
+		h.WriteJaegerBatch(t, &thrift.Batch{
 			Process: &thrift.Process{ServiceName: "app"},
 			Spans: []*thrift.Span{
 				{
@@ -106,10 +102,9 @@ func TestMetricsGeneratorRemoteWrite(t *testing.T) {
 				},
 			},
 		})
-		require.NoError(t, err)
 
 		// also send one with an invalid label value
-		err = h.JaegerExporter.EmitBatch(context.Background(), &thrift.Batch{
+		h.WriteJaegerBatch(t, &thrift.Batch{
 			Process: &thrift.Process{ServiceName: "app"},
 			Spans: []*thrift.Span{
 				{
@@ -124,10 +119,10 @@ func TestMetricsGeneratorRemoteWrite(t *testing.T) {
 				},
 			},
 		})
-		require.NoError(t, err)
 
 		// Fetch metrics from Prometheus once they are received
 		var metricFamilies map[string]*io_prometheus_client.MetricFamily
+		var err error
 		for {
 			metricFamilies, err = extractMetricsFromPrometheus(h.Prometheus, `{__name__=~"traces_.+"}`)
 			require.NoError(t, err)
@@ -207,7 +202,7 @@ func TestMetricsGeneratorTargetInfoEnabled(t *testing.T) {
 		traceIDHigh := r.Int63()
 		parentSpanID := r.Int63()
 
-		err := h.JaegerExporter.EmitBatch(context.Background(), &thrift.Batch{
+		h.WriteJaegerBatch(t, &thrift.Batch{
 			Process: &thrift.Process{ServiceName: "lb",
 				Tags: []*thrift.Tag{{Key: "target_info", VStr: stringPtr("lb")}},
 			},
@@ -224,9 +219,8 @@ func TestMetricsGeneratorTargetInfoEnabled(t *testing.T) {
 				},
 			},
 		})
-		require.NoError(t, err)
 
-		err = h.JaegerExporter.EmitBatch(context.Background(), &thrift.Batch{
+		h.WriteJaegerBatch(t, &thrift.Batch{
 			Process: &thrift.Process{ServiceName: "app",
 				Tags: []*thrift.Tag{{Key: "target_info", VStr: stringPtr("app")}},
 			},
@@ -243,10 +237,10 @@ func TestMetricsGeneratorTargetInfoEnabled(t *testing.T) {
 				},
 			},
 		})
-		require.NoError(t, err)
 
 		// Fetch metrics from Prometheus once they are received
 		var metricFamilies map[string]*io_prometheus_client.MetricFamily
+		var err error
 		for {
 			metricFamilies, err = extractMetricsFromPrometheus(h.Prometheus, `{__name__=~"traces_.+"}`)
 			require.NoError(t, err)
@@ -295,7 +289,7 @@ func TestMetricsGeneratorMessagingSystemLatencyHistogramEnabled(t *testing.T) {
 		consumerDuration := 2 * time.Second
 
 		// Producer span
-		err := h.JaegerExporter.EmitBatch(context.Background(), &thrift.Batch{
+		h.WriteJaegerBatch(t, &thrift.Batch{
 			Process: &thrift.Process{ServiceName: "producer"},
 			Spans: []*thrift.Span{
 				{
@@ -313,10 +307,9 @@ func TestMetricsGeneratorMessagingSystemLatencyHistogramEnabled(t *testing.T) {
 				},
 			},
 		})
-		require.NoError(t, err)
 
 		// Consumer span
-		err = h.JaegerExporter.EmitBatch(context.Background(), &thrift.Batch{
+		h.WriteJaegerBatch(t, &thrift.Batch{
 			Process: &thrift.Process{ServiceName: "consumer"},
 			Spans: []*thrift.Span{
 				{
@@ -334,10 +327,10 @@ func TestMetricsGeneratorMessagingSystemLatencyHistogramEnabled(t *testing.T) {
 				},
 			},
 		})
-		require.NoError(t, err)
 
 		// Wait for the metric to be produced
 		var metricFamilies map[string]*io_prometheus_client.MetricFamily
+		var err error
 		for {
 			metricFamilies, err = extractMetricsFromPrometheus(h.Prometheus, `{__name__=~"traces_.+"}`)
 			require.NoError(t, err)
