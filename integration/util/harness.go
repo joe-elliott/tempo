@@ -37,6 +37,11 @@ const (
 	ServiceBackendWorker    = "backend-worker"
 )
 
+const (
+	azuriteImage = "mcr.microsoft.com/azure-storage/azurite:3.35.0"
+	gcsImage     = "fsouza/fake-gcs-server:1.52.2"
+)
+
 // DeploymentMode specifies whether to run Tempo as a single binary or microservices
 type DeploymentMode int
 
@@ -436,7 +441,7 @@ func applyConfigOverlay(s *e2e.Scenario, overlayPath string, templateData map[st
 		baseMap = mergeMaps(baseMap, overlayMap)
 	}
 
-	// Marshal and write the result back to shared config
+	// Marshal and write the result back to shared config jpe - use writeFileToSharedDir func?
 	outputBytes, err := yaml.Marshal(baseMap)
 	if err != nil {
 		return fmt.Errorf("failed to marshal merged config: %w", err)
@@ -652,19 +657,13 @@ func startMicroservices(t *testing.T, s *e2e.Scenario, harness *TempoHarness, co
 	if config.Components&ComponentRecentDataQuerying != 0 {
 		// Always start core components for recent data ingestion and querying
 		// Start LiveStores
-		liveStoreZoneA := NewNamedTempoLiveStore(
-			"live-store-zone-a",
-			0,
-		)
+		liveStoreZoneA := NewTempoLiveStore('a', 0)
 		harness.Services[ServiceLiveStoreZoneA] = liveStoreZoneA
 		if err := s.StartAndWaitReady(liveStoreZoneA); err != nil {
 			return fmt.Errorf("failed to start live store zone a: %w", err)
 		}
 
-		liveStoreZoneB := NewNamedTempoLiveStore(
-			"live-store-zone-b",
-			0,
-		)
+		liveStoreZoneB := NewTempoLiveStore('b', 0)
 		harness.Services[ServiceLiveStoreZoneB] = liveStoreZoneB
 		if err := s.StartAndWaitReady(liveStoreZoneB); err != nil {
 			return fmt.Errorf("failed to start live store zone b: %w", err)
