@@ -264,7 +264,7 @@ func TestLimitsPartialSuccess(t *testing.T) {
 		require.NoError(t, h.OTLPExporter.Shutdown(context.Background()))
 
 		// wait for live store to ingest traces
-		h.WaitTracesQueryable(t, len(traceIDs))
+		h.WaitTracesQueryable(t, 3) // only 3 traces are small enough to be ingested
 
 		// query for the traces that didn't trigger an error
 		client := h.HTTPClient

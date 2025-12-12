@@ -287,7 +287,7 @@ func TempoBackoff() backoff.Config {
 	return backoff.Config{
 		MinBackoff: 500 * time.Millisecond,
 		MaxBackoff: time.Second,
-		MaxRetries: 600, // Sometimes the CI is slow ¯\_(ツ)_/¯
+		MaxRetries: 300, // Sometimes the CI is slow ¯\_(ツ)_/¯
 	}
 }
 
