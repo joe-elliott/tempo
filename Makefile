@@ -146,13 +146,13 @@ test-with-cover-others: tools ## Run other tests with code coverage
 #     - can we pass a parameter to run integration tests in // to speed things up?
 # runs e2e tests in the top level integration/e2e directory
 .PHONY: test-e2e
-test-e2e: tools docker-tempo docker-tempo-query test-e2e-deployments test-e2e-api test-e2e-limits test-e2e-metrics-generator test-e2e-storage test-e2e-util  ## Run end to end tests
+test-e2e: tools docker-tempo docker-tempo-query test-e2e-operations test-e2e-api test-e2e-limits test-e2e-metrics-generator test-e2e-storage test-e2e-util  ## Run end to end tests
 	@echo "All e2e tests completed"
 
 # runs only deployment modes e2e tests
-.PHONY: test-e2e-deployments
-test-e2e-deployments: tools docker-tempo docker-tempo-query ## Run end to end tests for mments
-	$(GOTEST) -v $(GOTEST_OPT) ./integration/deployments
+.PHONY: test-e2e-operations
+test-e2e-operations: tools docker-tempo docker-tempo-query ## Run end to end tests for operations
+	$(GOTEST) -v $(GOTEST_OPT) ./integration/operations
 
 # runs only api e2e tests
 .PHONY: test-e2e-api
